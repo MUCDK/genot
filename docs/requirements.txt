@@ -1,0 +1,5 @@
+Sphinx>=4.0.1
+furo>=2022.3.4
+sphinx-automodapi>=0.13
+sphinx_click>=3.0.0
+click>=8.0.1

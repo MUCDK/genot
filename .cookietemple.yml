@@ -1,0 +1,18 @@
+cookietemple_version: '1.4.2 # <<COOKIETEMPLE_NO_BUMP>>'
+domain: cli
+language: python
+project_slug: entot
+project_slug_no_hyphen: entot
+template_version: '2.1.1 # <<COOKIETEMPLE_NO_BUMP>>'
+template_handle: cli-python
+github_username: MUCDK
+creator_github_username: MUCDK
+is_github_repo: true
+is_repo_private: true
+is_github_orga: false
+full_name: Dominik Klein
+email: dominik.klein@helmholtz-munich.de
+project_name: entot
+project_short_description: Neural entropic optimal transport
+version: 0.1.0
+license: MIT
