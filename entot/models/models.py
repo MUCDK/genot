@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import jax.random as random
 
 # ott
+import ott
 from ott.geometry import pointcloud
 from ott.geometry.geometry import Geometry
 from ott.solvers.linear import sinkhorn
@@ -254,17 +255,106 @@ class SeguyModel(NeuralDualPotentialModel):
         
         return step_fn
 
-    def transport(self, x: Optional[jnp.ndarray]=None) -> jnp.ndarray:
+    def transport_mlp(self, x: Optional[jnp.ndarray]=None) -> jnp.ndarray:
         if self.state_mlp is None:
             raise ValueError("Not trained yet.")
         x=x if x is not None else self.x_loader.data
         return self.state_mlp.apply_fn({"params": self.state_mlp.params}, x)
+    
+    def transport(self, x: Optional[jnp.ndarray]=None) -> Any:
+        x = x if x is not None else self.x_loader.data
+        return x - jax.vmap(jax.grad(lambda x: self.state_f.apply_fn({"params": self.state_f.params}, x), argnums=0))(x)
     
     def get_hessians_f(self, x: jnp.ndarray) -> jnp.ndarray:
         x = jnp.atleast_2d(x)
         hess_eval = jax.hessian(lambda x: 0.5 * jnp.inner(x, x) - self.state_f.apply_fn({"params": self.state_f.params}, x), argnums=0)
         vmap_hess_eval = jax.vmap(lambda x: hess_eval(x))
         return vmap_hess_eval(x)
+    
+
+
+class SinkhornModel(NeuralDualPotentialModel):
+
+    def __init__(self, epsilon: float, batch_size_source: int, batch_size_target: int, iterations: int, input_dim: int, cost_fn: Optional[str]=None, **kwargs) -> None:
+        super().__init__(epsilon=epsilon, batch_size_source=batch_size_source, batch_size_target=batch_size_target, iterations=iterations, input_dim=input_dim)
+        self.cost_fn = cost_fn
+        self.state_f: Optional[TrainState] = None
+        self.state_g: Optional[TrainState] = None
+        self.train_step: Any = None
+        self.metrics = {"obj": [], "f": [], "g": [], "div_transported_source": [], "div_transported_target": []}
+        
+        g = MLP(
+        dim_hidden=[256, 256],
+        is_potential=True,
+        act_fn=nn.gelu)
+
+        f = MLP(
+        dim_hidden=[256, 256],
+        is_potential=True,
+        act_fn=nn.gelu)
+        
+        opt_f = optax.adamw(learning_rate=1e-3)
+        opt_g = optax.adamw(learning_rate=1e-3)
+        
+        self.setup(f=f, g=g, opt_f=opt_f, opt_g=opt_g, input_dim=self.input_dim, rng=self.rng)
+
+
+    def setup(self, f, g, opt_f, opt_g, input_dim, rng):
+        rng, rng_f, rng_g = jax.random.split(rng, 3)
+
+        self.state_f = f.create_train_state(rng_f, opt_f, input_dim)
+        self.state_g = g.create_train_state(rng_g, opt_g, input_dim)
+        self.train_step = self.get_train_step()
+
+
+    def train(self, batch: Dict[str, jnp.ndarray]) -> Dict[str, Any]:
+        
+        self.state_f, self.state_g, metrics = self.train_step(self.state_f, self.state_g, batch, self.epsilon, self.cost_fn)
+        return metrics
+
+
+    def get_train_step(self) -> Callable:
+        
+        def loss(params_f: jnp.ndarray, params_g: jnp.ndarray, state_f: TrainState, state_g: TrainState, batch: Dict[str, jnp.ndarray], epsilon: float):
+            geom = pointcloud.PointCloud(batch["source"], batch["target"], epsilon=epsilon)
+            out = sinkhorn.Sinkhorn()(linear_problem.LinearProblem(geom))
+            
+            f_x = state_f.apply_fn({"params": params_f}, batch["source"])
+            g_y = state_g.apply_fn({"params": params_g}, batch["target"])
+
+
+            cost = geom.cost_matrix
+            z_f = (g_y - cost) / epsilon
+            f_new = -epsilon * jax.scipy.special.logsumexp(z_f, axis=-1)
+
+            z_g = (f_x - jnp.transpose(cost))/epsilon
+            g_new = -epsilon * jax.scipy.special.logsumexp(z_g, axis=-1)
+
+            t_1 = jnp.mean(optax.l2_loss(f_new, out.f))
+            t_2 = jnp.mean(optax.l2_loss(g_new, out.g))
+            transported_source = batch["source"] - jax.vmap(jax.grad(lambda x: self.state_f.apply_fn({"params": self.state_f.params}, x), argnums=0))(batch["source"])
+            transported_target = batch["target"] - jax.vmap(jax.grad(lambda x: self.state_f.apply_fn({"params": self.state_f.params}, x), argnums=0))(batch["target"])
+            t_3 = ott.tools.sinkhorn_divergence.sinkhorn_divergence(pointcloud.PointCloud, transported_source, batch["target"]).divergence
+            t_4 = ott.tools.sinkhorn_divergence.sinkhorn_divergence(pointcloud.PointCloud, transported_target, batch["source"]).divergence
+            
+            metrics = t_1, t_2, t_3, t_4
+            return t_1+t_2+t_3+t_4, metrics
+            
+            
+        def step_fn(state_f: TrainState, state_g: TrainState, batch: Dict[str, jnp.ndarray], epsilon: float, cost_fn: Optional[str]=None):
+            grad_fn = jax.value_and_grad(loss, argnums=[0,1], has_aux=True)
+            (obj_value, metrics), grads = grad_fn(state_f.params, state_g.params, state_f, state_g, batch, epsilon)
+            grads_f, grads_g = grads
+            metrics = {"obj": obj_value, "f": metrics[0], "g": metrics[1], "div_transported_source": metrics[2], "div_transported_target": metrics[3]}
+            
+            return state_f.apply_gradients(grads=grads_f), state_g.apply_gradients(grads=grads_g), metrics
+    
+        return step_fn
+    
+
+    def transport(self, x: Optional[jnp.ndarray]=None) -> Any:
+        x = x if x is not None else self.x_loader.data
+        return x - jax.vmap(jax.grad(lambda x: self.state_f.apply_fn({"params": self.state_f.params}, x), argnums=0))(x)
 
     
         
