@@ -1,3 +1,5 @@
+from entot import data, models
+
 """Top-level package for entot."""
 
 __author__ = "Dominik Klein"
