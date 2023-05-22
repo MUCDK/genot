@@ -32,7 +32,7 @@ class MixtureNormalSampler:
             std_normal = jax.random.normal(key, (self.batch_size,self.dim)) 
         else: 
             std_normal = jax.random.normal(key, (self.batch_size,))
-        return std_normal * self.var + self.centers[comps_idx]
+        return jnp.atleast_2d(std_normal * self.var + self.centers[comps_idx])
         
 
 

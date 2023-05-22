@@ -1,7 +1,7 @@
 # jax
 from abc import ABC, abstractmethod
 from types import MappingProxyType
-from typing import Any, Callable, Dict, Literal, Mapping, Optional
+from typing import Any, Callable, Dict, Literal, Mapping, Optional, Union
 
 import flax.linen as nn
 import jax
@@ -25,7 +25,7 @@ from ott.solvers.linear import acceleration, sinkhorn
 from ott.solvers.linear.sinkhorn import SinkhornOutput
 from tqdm import tqdm
 
-from entot.models.utils import MLP, DataLoader, _concatenate
+from entot.models.utils import MLP, DataLoader, _concatenate, MixtureNormalSampler
 
 
 class DualPotentialModel(ABC):
@@ -408,15 +408,15 @@ class NoiseOutsourcingModel():
         self.train_step_phi = self.get_train_step(to_optimize="phi")
 
     
-    def __call__(self, x: jnp.ndarray, y:jnp.ndarray) -> Any:
+    def __call__(self, x: Union[jnp.ndarray, MixtureNormalSampler], y:Union[jnp.ndarray, MixtureNormalSampler]) -> Any:
         batch: Dict[str, jnp.ndarray] = {}
-        self.x_loader = DataLoader(x, batch_size=self.batch_size_source)
-        self.y_loader = DataLoader(y, batch_size=self.batch_size_target)
+        self.x_loader = DataLoader(x, batch_size=self.batch_size_source) if isinstance(x, jnp.ndarray) else x
+        self.y_loader = DataLoader(y, batch_size=self.batch_size_target) if isinstance(y, jnp.ndarray) else y
         for step in tqdm(range(self.iterations)):
             self.rng, rng_x, rng_y, rng_noise, rng_sample = jax.random.split(self.rng, 5)
             batch["source"] = self.x_loader(rng_x)
             batch["target"] = self.y_loader(rng_y)
-            batch["latent"] = self.noise_fn(rng_noise, shape=[len(batch["source"]), self.noise_dim, self.k_noise_per_source]) * self.std
+            batch["latent"] = self.noise_fn(rng_noise, shape=[len(batch["source"]), self.noise_dim]) * self.std
             metrics, t_xz = self.train(batch, self.epsilon, rng_sample)
             for key, value in metrics.items():
                 self.metrics[key].append(value)
@@ -427,6 +427,7 @@ class NoiseOutsourcingModel():
 
     def train(self, batch: Dict[str, jnp.ndarray], epsilon: float, key: jax.random.PRNGKeyArray) -> Dict[str, Any]:
         geom = pointcloud.PointCloud(batch["source"], batch["target"], epsilon=epsilon)
+        print(batch["source"].shape, batch["target"].shape)
         out = sinkhorn.Sinkhorn()(linear_problem.LinearProblem(geom))
         pi_star_inds = jax.random.categorical(key, logits=jnp.log(out.matrix.flatten()))
         inds_source = pi_star_inds // len(batch["target"])
@@ -450,7 +451,8 @@ class NoiseOutsourcingModel():
             t_xz = state_t.apply_fn({"params": params_t}, _concatenate(batch["source"], batch["latent"]))
             phi_pi_hat = state_phi.apply_fn({"params": params_phi}, _concatenate(batch["source"], t_xz))
             phi_pi_star = state_phi.apply_fn({"params": params_phi}, batch["pi_star_samples"])
-            kl = jnp.mean(phi_pi_hat) - jnp.mean(jnp.exp(phi_pi_star))
+            #kl = jnp.mean(phi_pi_hat) - jnp.mean(jnp.exp(phi_pi_star))
+            kl = jnp.mean(phi_pi_hat) - jax.scipy.special.logsumexp(phi_pi_star)
             #print("kl", kl)
             return - kl
 
