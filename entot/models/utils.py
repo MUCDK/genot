@@ -32,7 +32,7 @@ class MixtureNormalSampler:
             std_normal = jax.random.normal(key, (self.batch_size,self.dim)) 
         else: 
             std_normal = jax.random.normal(key, (self.batch_size,))
-        return jnp.atleast_2d(std_normal * self.var + self.centers[comps_idx])
+        return jnp.reshape(std_normal * self.var + self.centers[comps_idx], (self.batch_size,self.dim))
         
 
 
@@ -60,7 +60,7 @@ class MLP(ModelBase):
             x = jnp.expand_dims(x, 0)
         assert x.ndim == 2, x.ndim
         n_input = x.shape[-1]
-
+       
         z = x
         for n_hidden in self.dim_hidden:
             Wx = nn.Dense(n_hidden, use_bias=True)

@@ -2,12 +2,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-from IPython.display import clear_output
+from IPython.display import clear_output, display
 
 
 def plot_1D(source, target, T_xz):
     clear_output(wait=True)
-    print("Plotting")
     T_xz_mean = jnp.expand_dims(jnp.mean(target, axis=-1), axis=1)
     fig, axes = plt.subplots(1, 4, figsize=(12, 3), dpi=150)
     
@@ -38,8 +37,8 @@ def plot_1D(source, target, T_xz):
     axes[1].legend(fontsize=12, loc='upper left', framealpha=1)   
     axes[1].set_title(r"Target $\mathbb{Q}$ (1D)", fontsize=14)
 
-    T_xz_reshaped = jnp.reshape(T_xz, (T_xz.shape[0] * T_xz.shape[2], T_xz.shape[1]))
-    source_reshaped = jnp.repeat(source, T_xz.shape[2], axis=0)
+    T_xz_reshaped = T_xz #jnp.reshape(T_xz, (T_xz.shape[0] * T_xz.shape[2], T_xz.shape[1]))
+    source_reshaped = source#jnp.repeat(source, T_xz.shape[2], axis=0)
     joint_dist= jnp.concatenate((source_reshaped, T_xz_reshaped), axis=1)
 
     joint_dist.sort(axis=0)
@@ -51,14 +50,6 @@ def plot_1D(source, target, T_xz):
     )
     axes[2].set_title(r"Learned $\hat{\pi}$ (2D), ours", fontsize=14)
     
-    
-    axes[2].plot(
-        source[:,0], T_xz_mean[:,0], color='sandybrown', 
-        linewidth=3, label=r'$x\mapsto \overline{T}(x)$'
-    )
-    axes[2].legend(fontsize=12, loc='upper left', framealpha=1)
-
-
     # Plotting T(X,Z)
     sns.kdeplot(
         y=T_xz_reshaped[:,0], color='sandybrown', fill=True,
@@ -70,5 +61,6 @@ def plot_1D(source, target, T_xz):
 
     fig.tight_layout(pad=0.01)
     fig.show()
+    display(fig)
     
-    return None
+    return fig

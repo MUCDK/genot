@@ -384,18 +384,18 @@ class NoiseOutsourcingModel():
         self.k_noise_per_x = k_noise_per_x
 
         t = MLP(
-            dim_hidden=[256, 256, 256, 256],
+            dim_hidden=[128,128,128,128],
             is_potential=False,
             noise_dim=noise_dim,
-            act_fn=nn.gelu)
+            act_fn=nn.relu)
 
         phi = MLP(
-            dim_hidden=[256, 256, 256, 256],
+            dim_hidden=[128,128,128,128],
             is_potential=True,
-            act_fn=nn.gelu)
+            act_fn=nn.relu)
 
-        opt_t = optax.adamw(learning_rate=1e-3)
-        opt_phi = optax.adamw(learning_rate=1e-3)
+        opt_t = optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
+        opt_phi = optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
         
         self.setup(t=t, phi=phi, opt_t=opt_t, opt_phi=opt_phi, input_dim=self.input_dim, noise_dim=self.noise_dim, rng=self.rng)
 
@@ -413,6 +413,7 @@ class NoiseOutsourcingModel():
         self.x_loader = DataLoader(x, batch_size=self.batch_size_source) if isinstance(x, jnp.ndarray) else x
         self.y_loader = DataLoader(y, batch_size=self.batch_size_target) if isinstance(y, jnp.ndarray) else y
         for step in tqdm(range(self.iterations)):
+        #for step in range(self.iterations):
             self.rng, rng_x, rng_y, rng_noise, rng_sample = jax.random.split(self.rng, 5)
             batch["source"] = self.x_loader(rng_x)
             batch["target"] = self.y_loader(rng_y)
@@ -427,12 +428,12 @@ class NoiseOutsourcingModel():
 
     def train(self, batch: Dict[str, jnp.ndarray], epsilon: float, key: jax.random.PRNGKeyArray) -> Dict[str, Any]:
         geom = pointcloud.PointCloud(batch["source"], batch["target"], epsilon=epsilon)
-        print(batch["source"].shape, batch["target"].shape)
         out = sinkhorn.Sinkhorn()(linear_problem.LinearProblem(geom))
-        pi_star_inds = jax.random.categorical(key, logits=jnp.log(out.matrix.flatten()))
+        pi_star_inds = jax.random.categorical(key, logits=jnp.log(out.matrix.flatten()), shape=(self.batch_size_source,))
         inds_source = pi_star_inds // len(batch["target"])
         inds_target = pi_star_inds % len(batch["target"])
         batch["pi_star_samples"] = _concatenate(batch["source"][inds_source], batch["target"][inds_target])
+        print(batch["pi_star_samples"].shape)
         
         for _ in range(self.inner_iterations):   
             self.state_phi, metrics_phi = self.train_step_phi(self.state_t, self.state_phi, batch)
@@ -451,9 +452,7 @@ class NoiseOutsourcingModel():
             t_xz = state_t.apply_fn({"params": params_t}, _concatenate(batch["source"], batch["latent"]))
             phi_pi_hat = state_phi.apply_fn({"params": params_phi}, _concatenate(batch["source"], t_xz))
             phi_pi_star = state_phi.apply_fn({"params": params_phi}, batch["pi_star_samples"])
-            #kl = jnp.mean(phi_pi_hat) - jnp.mean(jnp.exp(phi_pi_star))
-            kl = jnp.mean(phi_pi_hat) - jax.scipy.special.logsumexp(phi_pi_star)
-            #print("kl", kl)
+            kl = jnp.mean(phi_pi_hat) - jnp.mean(jnp.exp(phi_pi_star))
             return - kl
 
 
