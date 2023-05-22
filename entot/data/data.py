@@ -1,7 +1,8 @@
-import jax
-from jax import random
 from typing import List, Tuple
+
+import jax
 import jax.numpy as jnp
+from jax import random
 
 
 def create_gaussians(n_source: int, n_target: int, dimension: int = 2, means: Tuple[List[float], List[float]] = ([0,0], [1,1]), var_source: float = 1.0, var_target: float = 1.0, seed: int = 0):

@@ -1,12 +1,12 @@
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pandas as pd
-from IPython.display import clear_output
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+from IPython.display import clear_output
+
 
 def plot_1D(source, target, T_xz):
     clear_output(wait=True)
-    print("Step", step)
     print("Plotting")
     T_xz_mean = jnp.expand_dims(jnp.mean(target, axis=-1), axis=1)
     fig, axes = plt.subplots(1, 4, figsize=(12, 3), dpi=150)
@@ -69,6 +69,6 @@ def plot_1D(source, target, T_xz):
     axes[3].set_title(r"Mapped $T_{\sharp}(\mathbb{P}\times\mathbb{S})$ (1D)", fontsize=14)
 
     fig.tight_layout(pad=0.01)
-    fig.plot()
+    fig.show()
     
     return None

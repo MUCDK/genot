@@ -1,11 +1,11 @@
-from typing import Any, Union, Tuple, Iterable
-from ott.solvers.nn.models import ModelBase, NeuralTrainState
-from typing import Sequence, Callable
+from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union
+
 import flax.linen as nn
-import jax.numpy as jnp
 import jax
+import jax.numpy as jnp
 import optax
-from typing import Dict
+from ott.solvers.nn.models import ModelBase, NeuralTrainState
+
 
 class DataLoader:
     def __init__(self, data: jnp.ndarray, batch_size) -> None:

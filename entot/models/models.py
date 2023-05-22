@@ -1,36 +1,31 @@
 # jax
+from abc import ABC, abstractmethod
+from types import MappingProxyType
+from typing import Any, Callable, Dict, Literal, Mapping, Optional
+
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import jax.random as random
+import jax.scipy as jsp
+import jax_dataloader as jdl
+import matplotlib.pyplot as plt
+import optax
 
 # ott
 import ott
+import ott.geometry.costs as costs
+from flax.training.train_state import TrainState
 from ott.geometry import pointcloud
 from ott.geometry.geometry import Geometry
-from ott.solvers.linear import sinkhorn
-from ott.problems.linear import linear_problem
-import ott.geometry.costs as costs
-from ott.solvers.linear import acceleration
-from typing import Any, Mapping, Callable, Optional
-from types import MappingProxyType
-import flax.linen as nn
-import jax.numpy as jnp
-import optax
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-import jax_dataloader as jdl
-from flax.training.train_state import TrainState
-from typing import Literal, Dict
 from ott.math.utils import logsumexp as lse
-import jax.scipy as jsp
-from ott.solvers.linear.sinkhorn import SinkhornOutput
-from abc import abstractmethod, ABC
+from ott.problems.linear import linear_problem
 from ott.problems.linear.potentials import EntropicPotentials
+from ott.solvers.linear import acceleration, sinkhorn
+from ott.solvers.linear.sinkhorn import SinkhornOutput
+from tqdm import tqdm
 
-
-from typing import Any
-
-from entot.models.utils import DataLoader, _concatenate, MLP
+from entot.models.utils import MLP, DataLoader, _concatenate
 
 
 class DualPotentialModel(ABC):
@@ -368,7 +363,7 @@ class SinkhornModel(NeuralDualPotentialModel):
     
         
 class NoiseOutsourcingModel():
-    def __init__(self, epsilon: float, batch_size_source: int, batch_size_target: int, iterations: int, input_dim: int, noise_dim: int = 2, inner_iterations: int = 10, std: float = 0.1, callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None, callback_iters: int = 10, cost_fn: Optional[str]=None, rng: Optional[jax.random.PRNGKeyArray] = None, **kwargs) -> None:
+    def __init__(self, epsilon: float, batch_size_source: int, batch_size_target: int, iterations: int, input_dim: int, noise_dim: int = 2, inner_iterations: int = 10, std: float = 0.1, k_noise_per_x: int = 1, callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None, callback_iters: int = 10, cost_fn: Optional[str]=None, rng: Optional[jax.random.PRNGKeyArray] = None, **kwargs) -> None:
         self.input_dim = input_dim
         self.epsilon = epsilon
         self.batch_size_source = batch_size_source
@@ -385,8 +380,9 @@ class NoiseOutsourcingModel():
         self.rng = jax.random.PRNGKey(0) if rng is None else rng
         self.noise_fn = jax.random.normal
         self.callback = callback
-        self.callback_iters
-        
+        self.callback_iters = callback_iters
+        self.k_noise_per_x = k_noise_per_x
+
         t = MLP(
             dim_hidden=[256, 256, 256, 256],
             is_potential=False,
@@ -420,7 +416,7 @@ class NoiseOutsourcingModel():
             self.rng, rng_x, rng_y, rng_noise, rng_sample = jax.random.split(self.rng, 5)
             batch["source"] = self.x_loader(rng_x)
             batch["target"] = self.y_loader(rng_y)
-            batch["latent"] = self.noise_fn(rng_noise, shape=[len(batch["source"]), self.noise_dim]) * self.std
+            batch["latent"] = self.noise_fn(rng_noise, shape=[len(batch["source"]), self.noise_dim, self.k_noise_per_source]) * self.std
             metrics, t_xz = self.train(batch, self.epsilon, rng_sample)
             for key, value in metrics.items():
                 self.metrics[key].append(value)
@@ -433,8 +429,8 @@ class NoiseOutsourcingModel():
         geom = pointcloud.PointCloud(batch["source"], batch["target"], epsilon=epsilon)
         out = sinkhorn.Sinkhorn()(linear_problem.LinearProblem(geom))
         pi_star_inds = jax.random.categorical(key, logits=jnp.log(out.matrix.flatten()))
-        inds_source = pi_star_inds // len(batch["source"])
-        inds_target = pi_star_inds % len(batch["source"])
+        inds_source = pi_star_inds // len(batch["target"])
+        inds_target = pi_star_inds % len(batch["target"])
         batch["pi_star_samples"] = _concatenate(batch["source"][inds_source], batch["target"][inds_target])
         
         for _ in range(self.inner_iterations):   
@@ -447,6 +443,7 @@ class NoiseOutsourcingModel():
         
         def loss_t(params_t: jnp.ndarray, params_phi: jnp.ndarray, state_t: TrainState, state_phi: TrainState, batch: Dict[str, jnp.ndarray]):
             t_xz = state_t.apply_fn({"params": params_t}, _concatenate(batch["source"], batch["latent"]))
+            #print("t loss ", jnp.mean(state_phi.apply_fn({"params": params_phi}, _concatenate(batch["source"], t_xz))))
             return jnp.mean(state_phi.apply_fn({"params": params_phi}, _concatenate(batch["source"], t_xz))) , t_xz
         
         def loss_phi(params_t: jnp.ndarray, params_phi: jnp.ndarray, state_t: TrainState, state_phi: TrainState, batch: Dict[str, jnp.ndarray]): 
@@ -454,13 +451,14 @@ class NoiseOutsourcingModel():
             phi_pi_hat = state_phi.apply_fn({"params": params_phi}, _concatenate(batch["source"], t_xz))
             phi_pi_star = state_phi.apply_fn({"params": params_phi}, batch["pi_star_samples"])
             kl = jnp.mean(phi_pi_hat) - jnp.mean(jnp.exp(phi_pi_star))
+            #print("kl", kl)
             return - kl
 
 
         def step_fn(state_t: TrainState, state_phi: TrainState, batch: Dict[str, jnp.ndarray]):
             if to_optimize == "t":
-                grad_fn, t_xz = jax.value_and_grad(loss_t, has_aux=True, argnums=0)
-                obj_value, grads = grad_fn(state_t.params, state_phi.params, state_t, state_phi, batch)
+                grad_fn = jax.value_and_grad(loss_t, has_aux=True, argnums=0)
+                (obj_value, t_xz), grads = grad_fn(state_t.params, state_phi.params, state_t, state_phi, batch)
                 metrics = {"t_obj": obj_value} 
                 return state_t.apply_gradients(grads=grads), metrics, t_xz
             elif to_optimize == "phi":
