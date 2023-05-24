@@ -1,10 +1,19 @@
-from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union, Optional
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import optax
 from ott.solvers.nn.models import ModelBase, NeuralTrainState
+import jax
+import jax.numpy as jnp
+from ott.geometry import pointcloud
+from ott.solvers.linear import sinkhorn
+from ott.problems.linear import linear_problem
+import ott.geometry.costs as costs
+from typing import Any, Mapping, Callable
+from types import MappingProxyType
+
 
 
 class DataLoader:
@@ -32,6 +41,7 @@ class MixtureNormalSampler:
             std_normal = jax.random.normal(key, (self.batch_size,self.dim)) 
         else: 
             std_normal = jax.random.normal(key, (self.batch_size,))
+        self.centers[comps_idx]
         return jnp.reshape(std_normal * self.var + self.centers[comps_idx], (self.batch_size,self.dim))
         
 
@@ -52,6 +62,7 @@ class MLP(ModelBase):
     is_potential: bool = True
     act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.leaky_relu
     noise_dim: int = 0
+    output_dim: Optional[int] = None
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
@@ -72,8 +83,11 @@ class MLP(ModelBase):
 
             quad_term = 0.5 * jax.vmap(jnp.dot)(x, x)
             z += quad_term
-        else:
+        elif self.output_dim is None:
             Wx = nn.Dense(n_input-self.noise_dim, use_bias=True)
+            z = Wx(z)
+        else:
+            Wx = nn.Dense(self.output_dim, use_bias=True)
             z = Wx(z)
 
         return z.squeeze(0) if squeeze else z
@@ -95,3 +109,54 @@ class MLP(ModelBase):
             potential_gradient_fn=self.potential_gradient_fn,
             **kwargs,
         )
+    
+
+
+class KantorovichGap:
+    def __init__(
+        self,
+        geometry_kwargs: Mapping[str, Any] = MappingProxyType({}),
+        sinkhorn_kwargs: Mapping[str, Any] = MappingProxyType({}),
+    ) -> None:
+        self.geometry_kwargs = geometry_kwargs
+        self.sinkhorn_kwargs = sinkhorn_kwargs
+
+    def __call__(
+        self, samples: jnp.ndarray, latent: jnp.ndarray, T: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+    ) -> float:
+        """
+        Evaluate the Monge gap of vector field ``T``,
+        on the empirical reference measure samples defined by ``samples``.
+        """
+        input = _concatenate(samples, latent)
+        T_samples = T(input)
+
+        geom = pointcloud.PointCloud(
+            x=samples, y=T_samples,
+            **self.geometry_kwargs
+        )
+        id_displacement = jnp.mean(
+            jax.vmap(self.cost_fn)(samples, T_samples)
+        )
+        opt_displacement = sinkhorn.Sinkhorn(
+            **self.sinkhorn_kwargs
+        )(
+            linear_problem.LinearProblem(geom)
+        ).reg_ot_cost
+        opt_displacement = jnp.add(
+            opt_displacement,
+            - 2 * geom.epsilon * jnp.log(len(samples))
+        )  # use Shannon entropy instead of relative entropy as entropic regularizer to ensure Monge gap positivity
+
+        return id_displacement - opt_displacement
+
+    @property
+    def cost_fn(self) -> costs.CostFn:
+        """"
+        Set cost function on which Monge gap is instanciated.
+        Default is squared euclidean.
+        """
+        if "cost_fn" in self.geometry_kwargs:
+            return self.geometry_kwargs["cost_fn"]
+        else:
+            return costs.SqEuclidean()

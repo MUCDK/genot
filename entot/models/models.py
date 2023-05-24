@@ -1,7 +1,7 @@
 # jax
 from abc import ABC, abstractmethod
 from types import MappingProxyType
-from typing import Any, Callable, Dict, Literal, Mapping, Optional, Union
+from typing import Any, Callable, Dict, Literal, Mapping, Optional, Union, Tuple
 
 import flax.linen as nn
 import jax
@@ -11,7 +11,7 @@ import jax.scipy as jsp
 import jax_dataloader as jdl
 import matplotlib.pyplot as plt
 import optax
-
+from functools import partial
 # ott
 import ott
 import ott.geometry.costs as costs
@@ -20,12 +20,15 @@ from ott.geometry import pointcloud
 from ott.geometry.geometry import Geometry
 from ott.math.utils import logsumexp as lse
 from ott.problems.linear import linear_problem
+from ott.problems.quadratic import quadratic_problem
 from ott.problems.linear.potentials import EntropicPotentials
 from ott.solvers.linear import acceleration, sinkhorn
+from ott.solvers.quadratic import gromov_wasserstein
 from ott.solvers.linear.sinkhorn import SinkhornOutput
 from tqdm import tqdm
+from ott.solvers.nn.models import ModelBase
 
-from entot.models.utils import MLP, DataLoader, _concatenate, MixtureNormalSampler
+from entot.models.utils import MLP, DataLoader, _concatenate, MixtureNormalSampler, KantorovichGap
 
 
 class DualPotentialModel(ABC):
@@ -363,7 +366,7 @@ class SinkhornModel(NeuralDualPotentialModel):
     
         
 class NoiseOutsourcingModel():
-    def __init__(self, epsilon: float, batch_size_source: int, batch_size_target: int, iterations: int, input_dim: int, noise_dim: int = 2, inner_iterations: int = 10, std: float = 0.1, k_noise_per_x: int = 1, callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None, callback_iters: int = 10, cost_fn: Optional[str]=None, rng: Optional[jax.random.PRNGKeyArray] = None, **kwargs) -> None:
+    def __init__(self, epsilon: float, batch_size_source: int, batch_size_target: int, iterations: int, input_dim: int, noise_dim: int = 2, inner_iterations: int = 10, std: float = 0.1, k_noise_per_x: int = 1, callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None, callback_iters: int = 10, cost_fn: Optional[str]=None, rng: Optional[jax.random.PRNGKeyArray] = None, setup: bool=True,**kwargs) -> None:
         self.input_dim = input_dim
         self.epsilon = epsilon
         self.batch_size_source = batch_size_source
@@ -396,8 +399,8 @@ class NoiseOutsourcingModel():
 
         opt_t = optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
         opt_phi = optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
-        
-        self.setup(t=t, phi=phi, opt_t=opt_t, opt_phi=opt_phi, input_dim=self.input_dim, noise_dim=self.noise_dim, rng=self.rng)
+        if setup:
+            self.setup(t=t, phi=phi, opt_t=opt_t, opt_phi=opt_phi, input_dim=self.input_dim, noise_dim=self.noise_dim, rng=self.rng)
 
 
     def setup(self, t, phi, opt_t, opt_phi, input_dim, noise_dim, rng):
@@ -433,7 +436,6 @@ class NoiseOutsourcingModel():
         inds_source = pi_star_inds // len(batch["target"])
         inds_target = pi_star_inds % len(batch["target"])
         batch["pi_star_samples"] = _concatenate(batch["source"][inds_source], batch["target"][inds_target])
-        print(batch["pi_star_samples"].shape)
         
         for _ in range(self.inner_iterations):   
             self.state_phi, metrics_phi = self.train_step_phi(self.state_t, self.state_phi, batch)
@@ -485,4 +487,188 @@ class NoiseOutsourcingModel():
 
 
     
+class GromovNOM(NoiseOutsourcingModel):
+
+    def __init__(self, epsilon: float, batch_size_source: int, batch_size_target: int, iterations: int, input_dim: int, output_dim: int, noise_dim: int = 2, inner_iterations: int = 10, std: float = 0.1, k_noise_per_x: int = 1, callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None, callback_iters: int = 10, cost_fn: Optional[str]=None, rng: Optional[jax.random.PRNGKeyArray] = None, **kwargs) -> None:
+        super().__init__(epsilon=epsilon, batch_size_source=batch_size_source, batch_size_target=batch_size_target, iterations=iterations, input_dim=input_dim, noise_dim=noise_dim, inner_iterations=inner_iterations, std=std, k_noise_per_x=k_noise_per_x, callback=callback, callback_iters=callback_iters,cost_fn=cost_fn, rng=rng, setup=False)
+        self.output_dim = output_dim
+
+        t = MLP(
+            dim_hidden=[128,128,128,128],
+            is_potential=False,
+            noise_dim=noise_dim,
+            output_dim=output_dim,
+            act_fn=nn.relu)
+
+        phi = MLP(
+            dim_hidden=[128,128,128,128],
+            is_potential=True,
+            act_fn=nn.relu)
+
+        opt_t = optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
+        opt_phi = optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
+        
+        self.setup(t=t, phi=phi, opt_t=opt_t, opt_phi=opt_phi, input_dim=self.input_dim, output_dim=self.output_dim, noise_dim=self.noise_dim, rng=self.rng)
+
+    def setup(self, t, phi, opt_t, opt_phi, input_dim, output_dim, noise_dim, rng):
+        self.state_t = t.create_train_state(rng, opt_t, input_dim+noise_dim)
+        self.state_phi = phi.create_train_state(rng, opt_phi, input_dim+output_dim)
+        self.train_step_t = self.get_train_step(to_optimize="t")
+        self.train_step_phi = self.get_train_step(to_optimize="phi")
+
+    def train(self, batch: Dict[str, jnp.ndarray], epsilon: float, key: jax.random.PRNGKeyArray) -> Dict[str, Any]:
+        geom_xx = pointcloud.PointCloud(batch["source"], batch["source"])
+        geom_yy = pointcloud.PointCloud(batch["target"], batch["target"])
+        out = gromov_wasserstein.GromovWasserstein(epsilon=epsilon)(quadratic_problem.QuadraticProblem(geom_xx, geom_yy))
+        pi_star_inds = jax.random.categorical(key, logits=jnp.log(out.matrix.flatten()), shape=(self.batch_size_source,))
+        inds_source = pi_star_inds // len(batch["target"])
+        inds_target = pi_star_inds % len(batch["target"])
+        batch["pi_star_samples"] = _concatenate(batch["source"][inds_source], batch["target"][inds_target])
+        
+        for _ in range(self.inner_iterations):   
+            self.state_phi, metrics_phi = self.train_step_phi(self.state_t, self.state_phi, batch)
+
+        self.state_t, metrics_t, t_xz = self.train_step_t(self.state_t, self.state_phi, batch)
+        return dict(metrics_t, **metrics_phi), t_xz
     
+
+class KantorovichGapModel():
+    def __init__(self, epsilon: float, input_dim: int, neural_net: Optional[ModelBase]=None, optimizer: Optional[optax.OptState]=None, epsilon_fitting_loss: float = 1e-2, std: float = 0.1, noise_dim: int = 4, opt: Optional[optax.OptState] = None, callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None, callback_iters: int = 10,
+            kantorovich_gap: Optional[Any] = None,
+            fitting_loss: Optional[Callable[[jnp.ndarray, jnp.ndarray], float]] = None,
+            lambda_monge_gap: float = 1.,
+            batch_size_source: int = 1024,
+            batch_size_target: int = 1024,
+            iterations: int = 10_000,
+            rng: Optional[jax.random.PRNGKeyArray] = None) -> None:
+        self.input_dim=input_dim
+        self.neural_net = neural_net
+        self.noise_dim = noise_dim
+        self.epsilon=epsilon
+        self.rng = jax.random.PRNGKey(0) if rng is None else rng
+        self.fitting_loss = lambda t_x, y: ott.tools.sinkhorn_divergence.sinkhorn_divergence(pointcloud.PointCloud, t_x, y, epsilon=epsilon_fitting_loss).divergence if fitting_loss is None else fitting_loss
+        self.lambda_monge_gap = lambda_monge_gap
+        self.iterations = iterations
+        self.std = std
+        self.batch_size_source = batch_size_source
+        self.callback=callback
+        self.callback_iters = callback_iters
+        self.noise_fn = jax.random.normal
+        self.batch_size_target = batch_size_target
+        self.kant_gap = KantorovichGap(geometry_kwargs={"epsilon": epsilon, **{"cost_fn": costs.SqEuclidean()}}) if kantorovich_gap is None else kantorovich_gap
+
+        self.metrics = {
+                'total_loss': [],
+                'fitting_loss': [],
+                'kant_gap': []
+            }
+
+        if neural_net is None:
+            self.neural_net = MLP(
+                dim_hidden=[128,128,128,128],
+                is_potential=False,
+                noise_dim=noise_dim,
+                act_fn=nn.relu)
+        else:
+            self.neural_net = neural_net
+
+        self.optimizer = optax.adamw(learning_rate=1e-4, weight_decay=1e-10) if opt is None else opt
+
+        self.setup(
+            self.input_dim, self.noise_dim, self.neural_net, self.optimizer
+        )
+
+    def setup(
+        self, 
+        input_dim: int, noise_dim: int, neural_net: ModelBase, optimizer: optax.OptState,
+    ) -> None:
+        
+        self.state_neural_net = neural_net.create_train_state(
+            self.rng,
+            optimizer,
+            input_dim+noise_dim
+        )
+        
+        self.step_fn = self._get_step_fn()
+    
+    @property
+    def neural_kant_gap(self) -> Callable:
+        return lambda params, apply_fn, batch: (
+                self.kant_gap(
+                    samples=batch['source'], 
+                    latent=batch['latent'],
+                    T=lambda x: apply_fn(
+                        {'params': params}, x
+                    )))
+            
+    @property
+    def neural_fitting_loss(self) -> Callable:
+        return lambda params, apply_fn, batch: (
+                self.fitting_loss(
+                    t_x=apply_fn(
+                        {'params': params}, _concatenate(batch['source'], batch["latent"])
+                    ), 
+                    y=batch['target']
+                )
+            )
+    
+    def __call__(self, x: Union[jnp.ndarray, MixtureNormalSampler], y:Union[jnp.ndarray, MixtureNormalSampler]) -> Any:
+        batch: Dict[str, jnp.ndarray] = {}
+        self.x_loader = DataLoader(x, batch_size=self.batch_size_source) if not isinstance(x, DataLoader) else x
+        self.y_loader = DataLoader(y, batch_size=self.batch_size_target) if not isinstance(y, DataLoader) else y
+        for step in tqdm(range(self.iterations)):
+        #for step in range(self.iterations):
+            self.rng, rng_x, rng_y, rng_noise, rng_sample = jax.random.split(self.rng, 5)
+            batch["source"] = self.x_loader(rng_x)
+            batch["target"] = self.y_loader(rng_y)
+            batch["latent"] = self.noise_fn(rng_noise, shape=[len(batch["source"]), self.noise_dim]) * self.std
+            self.state_neural_net, metrics, t_xz = self.step_fn(self.state_neural_net, batch)
+            for key, value in metrics.items():
+                self.metrics[key].append(value)
+            if self.callback is not None and step%self.callback_iters == 0:
+                print(batch["source"].shape, batch["target"].shape, batch["latent"].shape)
+                self.callback(batch["source"], batch["target"], t_xz)
+        
+    def _get_step_fn(self) -> Callable:
+        
+        def loss_fn(
+            params: jnp.ndarray,
+            apply_fn: Callable,
+            batch: Dict[str, jnp.ndarray],
+        ) -> Tuple[float, Dict[str, float]]:
+
+            val_fitting_loss = self.neural_fitting_loss(
+                params, apply_fn, batch
+            )
+            val_kant_gap = self.neural_kant_gap(
+                params, apply_fn, batch
+            )
+            val_tot_loss = val_fitting_loss + self.lambda_monge_gap * val_kant_gap
+
+            # store training logs
+            metrics = {
+                'total_loss': val_tot_loss,
+                'fitting_loss': val_fitting_loss,
+                'kant_gap': val_kant_gap
+            }
+            t_xz = apply_fn(
+                        {'params': params}, _concatenate(batch['source'], batch["latent"])
+                    )
+            return val_tot_loss, (metrics, t_xz)
+        
+        def step_fn(
+            state_neural_net: TrainState,
+            train_batch: Dict[str, jnp.ndarray],
+        ) -> Tuple[TrainState, Dict[str, float], jnp.ndarray]:
+
+            grad_fn = jax.value_and_grad(loss_fn, argnums=0, has_aux=True)
+            (_, (metrics, t_xz)), grads = grad_fn(
+                state_neural_net.params, state_neural_net.apply_fn, 
+                train_batch
+            )
+
+            return state_neural_net.apply_gradients(grads=grads), metrics, t_xz
+        
+        return step_fn
+
+
