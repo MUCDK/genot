@@ -28,7 +28,7 @@ from ott.solvers.linear.sinkhorn import SinkhornOutput
 from tqdm import tqdm
 from ott.solvers.nn.models import ModelBase
 
-from entot.models.utils import MLP, DataLoader, _concatenate, MixtureNormalSampler, KantorovichGap
+from entot.models.utils import MLP, DataLoader, _concatenate, MixtureNormalSampler, KantorovichGap, BaseSampler
 
 
 class DualPotentialModel(ABC):
@@ -533,7 +533,7 @@ class GromovNOM(NoiseOutsourcingModel):
     
 
 class KantorovichGapModel():
-    def __init__(self, epsilon: float, input_dim: int, neural_net: Optional[ModelBase]=None, optimizer: Optional[optax.OptState]=None, epsilon_fitting_loss: float = 1e-2, std: float = 0.1, noise_dim: int = 4, opt: Optional[optax.OptState] = None, callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None, callback_iters: int = 10,
+    def __init__(self, epsilon: float, input_dim: Sequence[int], neural_net: Optional[ModelBase]=None,  k_noise_per_x: int = 1, epsilon_fitting_loss: float = 1e-2, std: float = 0.1, noise_dim: int = 4, opt: Optional[optax.OptState] = None, callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None, callback_iters: int = 10,
             kantorovich_gap: Optional[Any] = None,
             fitting_loss: Optional[Callable[[jnp.ndarray, jnp.ndarray], float]] = None,
             lambda_monge_gap: float = 1.,
@@ -546,7 +546,7 @@ class KantorovichGapModel():
         self.noise_dim = noise_dim
         self.epsilon=epsilon
         self.rng = jax.random.PRNGKey(0) if rng is None else rng
-        self.fitting_loss = lambda t_x, y: ott.tools.sinkhorn_divergence.sinkhorn_divergence(pointcloud.PointCloud, t_x, y, epsilon=epsilon_fitting_loss).divergence if fitting_loss is None else fitting_loss
+        self.fitting_loss = lambda t_x, y: ott.tools.sinkhorn_divergence.sinkhorn_divergence(pointcloud.PointCloud, jnp.reshape(t_x, (t_x.shape[0], -1)), jnp.reshape(y, (y.shape[0], -1)), epsilon=epsilon_fitting_loss).divergence if fitting_loss is None else fitting_loss
         self.lambda_monge_gap = lambda_monge_gap
         self.iterations = iterations
         self.std = std
@@ -555,7 +555,8 @@ class KantorovichGapModel():
         self.callback_iters = callback_iters
         self.noise_fn = jax.random.normal
         self.batch_size_target = batch_size_target
-        self.kant_gap = KantorovichGap(geometry_kwargs={"epsilon": epsilon, **{"cost_fn": costs.SqEuclidean()}}) if kantorovich_gap is None else kantorovich_gap
+        self.k_noise_per_x = k_noise_per_x
+        self.kant_gap = KantorovichGap(noise_dim=noise_dim, geometry_kwargs={"epsilon": epsilon, **{"cost_fn": costs.SqEuclidean()}}) if kantorovich_gap is None else kantorovich_gap
 
         self.metrics = {
                 'total_loss': [],
@@ -586,7 +587,7 @@ class KantorovichGapModel():
         self.state_neural_net = neural_net.create_train_state(
             self.rng,
             optimizer,
-            input_dim+noise_dim
+            (*input_dim[:-1], input_dim[-1]+noise_dim)
         )
         
         self.step_fn = self._get_step_fn()
@@ -595,8 +596,7 @@ class KantorovichGapModel():
     def neural_kant_gap(self) -> Callable:
         return lambda params, apply_fn, batch: (
                 self.kant_gap(
-                    samples=batch['source'], 
-                    latent=batch['latent'],
+                    source=batch['source'],
                     T=lambda x: apply_fn(
                         {'params': params}, x
                     )))
@@ -606,7 +606,7 @@ class KantorovichGapModel():
         return lambda params, apply_fn, batch: (
                 self.fitting_loss(
                     t_x=apply_fn(
-                        {'params': params}, _concatenate(batch['source'], batch["latent"])
+                        {'params': params}, batch['source']
                     ), 
                     y=batch['target']
                 )
@@ -614,20 +614,21 @@ class KantorovichGapModel():
     
     def __call__(self, x: Union[jnp.ndarray, MixtureNormalSampler], y:Union[jnp.ndarray, MixtureNormalSampler]) -> Any:
         batch: Dict[str, jnp.ndarray] = {}
-        self.x_loader = DataLoader(x, batch_size=self.batch_size_source) if not isinstance(x, DataLoader) else x
-        self.y_loader = DataLoader(y, batch_size=self.batch_size_target) if not isinstance(y, DataLoader) else y
+        self.x_loader = DataLoader(x, batch_size=self.batch_size_source) if not isinstance(x, BaseSampler) else x
+        self.y_loader = DataLoader(y, batch_size=self.batch_size_target) if not isinstance(y, BaseSampler) else y
         for step in tqdm(range(self.iterations)):
         #for step in range(self.iterations):
             self.rng, rng_x, rng_y, rng_noise, rng_sample = jax.random.split(self.rng, 5)
-            batch["source"] = self.x_loader(rng_x)
+            source_batch = jnp.repeat(self.x_loader(rng_x), self.k_noise_per_x, axis=0)
+            noise_shape = (*source_batch.shape[:-1], self.noise_dim) if len(source_batch.shape[:-1])>1 else (source_batch.shape[:-1][0],self.noise_dim)
+            latent_batch = self.noise_fn(rng_noise, shape=noise_shape) * self.std 
+            batch["source"] = jnp.concatenate((source_batch, latent_batch), axis=-1)
             batch["target"] = self.y_loader(rng_y)
-            batch["latent"] = self.noise_fn(rng_noise, shape=[len(batch["source"]), self.noise_dim]) * self.std
             self.state_neural_net, metrics, t_xz = self.step_fn(self.state_neural_net, batch)
             for key, value in metrics.items():
                 self.metrics[key].append(value)
             if self.callback is not None and step%self.callback_iters == 0:
-                print(batch["source"].shape, batch["target"].shape, batch["latent"].shape)
-                self.callback(batch["source"], batch["target"], t_xz)
+                self.callback(batch["source"][..., :-self.noise_dim], batch["target"], t_xz)
         
     def _get_step_fn(self) -> Callable:
         
@@ -636,9 +637,9 @@ class KantorovichGapModel():
             apply_fn: Callable,
             batch: Dict[str, jnp.ndarray],
         ) -> Tuple[float, Dict[str, float]]:
-
+            
             val_fitting_loss = self.neural_fitting_loss(
-                params, apply_fn, batch
+                params, apply_fn, batch,
             )
             val_kant_gap = self.neural_kant_gap(
                 params, apply_fn, batch
@@ -652,7 +653,7 @@ class KantorovichGapModel():
                 'kant_gap': val_kant_gap
             }
             t_xz = apply_fn(
-                        {'params': params}, _concatenate(batch['source'], batch["latent"])
+                        {'params': params}, batch['source']
                     )
             return val_tot_loss, (metrics, t_xz)
         
@@ -670,5 +671,15 @@ class KantorovichGapModel():
             return state_neural_net.apply_gradients(grads=grads), metrics, t_xz
         
         return step_fn
+    
+
+    def transport(self, x: jnp.ndarray, samples_per_x: int = 1, seed: int = None) -> jnp.ndarray:
+        rng = jax.random.PRNGKey(seed)
+        source_batch = jnp.repeat(x, samples_per_x, axis=0)
+        noise_shape = (*source_batch.shape[:-1], self.noise_dim) if len(source_batch.shape[:-1])>1 else (source_batch.shape[:-1][0],self.noise_dim)
+        latent_batch = self.noise_fn(rng, shape=noise_shape) * self.std 
+        x_with_noise = jnp.concatenate((source_batch, latent_batch), axis=-1)
+        t_xz = self.state_neural_net.apply({"params": self.state_neural_net.params}, x_with_noise) 
+        return jnp.reshape.reshape(t_xz, (*x.shape, samples_per_x))
 
 

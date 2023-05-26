@@ -13,11 +13,14 @@ from ott.problems.linear import linear_problem
 import ott.geometry.costs as costs
 from typing import Any, Mapping, Callable
 from types import MappingProxyType
+from abc import ABC, abstractmethod
 
+class BaseSampler(ABC):
+    pass
 
-
-class DataLoader:
+class DataLoader(BaseSampler):
     def __init__(self, data: jnp.ndarray, batch_size) -> None:
+        super().__init__()
         self.data = data
         self.batch_size= batch_size
 
@@ -25,8 +28,9 @@ class DataLoader:
         inds = jax.random.choice(key, len(self.data), shape=[self.batch_size])
         return self.data[inds,:]
 
-class MixtureNormalSampler:
+class MixtureNormalSampler(BaseSampler):
     def __init__(self, centers: Iterable[int], dim: int, batch_size: int, var: float = 1.0) -> None:
+        super().__init__()
         self.centers = jnp.array(centers)
         self.dim = dim
         self.var = var
@@ -115,28 +119,26 @@ class MLP(ModelBase):
 class KantorovichGap:
     def __init__(
         self,
+        noise_dim: int,
         geometry_kwargs: Mapping[str, Any] = MappingProxyType({}),
         sinkhorn_kwargs: Mapping[str, Any] = MappingProxyType({}),
     ) -> None:
         self.geometry_kwargs = geometry_kwargs
         self.sinkhorn_kwargs = sinkhorn_kwargs
+        self.noise_dim = noise_dim
 
     def __call__(
-        self, samples: jnp.ndarray, latent: jnp.ndarray, T: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+        self, source: jnp.ndarray, T: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
     ) -> float:
-        """
-        Evaluate the Monge gap of vector field ``T``,
-        on the empirical reference measure samples defined by ``samples``.
-        """
-        input = _concatenate(samples, latent)
-        T_samples = T(input)
-
+        T_xz = T(source)
+        
         geom = pointcloud.PointCloud(
-            x=samples, y=T_samples,
+            x=jnp.reshape(source[..., :-self.noise_dim], (source.shape[0], -1)), y=jnp.reshape(T_xz, (T_xz.shape[0],-1)),
             **self.geometry_kwargs
         )
+        
         id_displacement = jnp.mean(
-            jax.vmap(self.cost_fn)(samples, T_samples)
+            jax.vmap(self.cost_fn)(source[..., :-self.noise_dim], T_xz)
         )
         opt_displacement = sinkhorn.Sinkhorn(
             **self.sinkhorn_kwargs
@@ -145,7 +147,7 @@ class KantorovichGap:
         ).reg_ot_cost
         opt_displacement = jnp.add(
             opt_displacement,
-            - 2 * geom.epsilon * jnp.log(len(samples))
+            - 2 * geom.epsilon * jnp.log(len(source))
         )  # use Shannon entropy instead of relative entropy as entropic regularizer to ensure Monge gap positivity
 
         return id_displacement - opt_displacement

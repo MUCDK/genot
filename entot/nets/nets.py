@@ -1,5 +1,9 @@
 import flax.linen as nn
 import jax.numpy as jnp
+import jax
+from typing import Union, Tuple, Any
+import optax
+from ott.solvers.nn.models import ModelBase, NeuralTrainState
 
 class Block(nn.Module):
     dim: int = 32
@@ -22,13 +26,14 @@ class ResnetBlock(nn.Module):
         x = Block(self.dim, self.groups)(inputs)
         x = Block(self.dim, self.groups)(x)
         res_conv = nn.Conv(self.dim, (1, 1), padding="SAME")(inputs)
-        return res_conv + inputs # in the original code they do res_conv+x, but don't understand why
+        return res_conv + x 
 
 
-class UNet(nn.Module): #adapted from https://www.kaggle.com/code/darshan1504/exploring-diffusion-models-with-jax
+class UNet(ModelBase): #adapted from https://www.kaggle.com/code/darshan1504/exploring-diffusion-models-with-jax
     dim: int = 8
     dim_scale_factor: tuple = (1, 2, 4, 8)
     num_groups: int = 8
+    diff_input_output: int = 0
 
 
     @nn.compact
@@ -69,7 +74,27 @@ class UNet(nn.Module): #adapted from https://www.kaggle.com/code/darshan1504/exp
 
         # Final ResNet block and output convolutional layer
         x = ResnetBlock(dim, self.num_groups)(x)
-        x = nn.Conv(channels, (1,1), padding="SAME")(x)
+        x = nn.Conv(channels-self.diff_input_output, (1,1), padding="SAME")(x)
         return x
 
+    def is_potential(self) -> bool:
+        return False
     
+    def create_train_state(
+        self,
+        rng: jax.random.PRNGKeyArray,
+        optimizer: optax.OptState,
+        input: Union[int, Tuple[int, ...]],
+        **kwargs: Any,
+    ) -> NeuralTrainState:
+        """Create initial training state."""
+        params = self.init(rng, jnp.ones(input))["params"]
+
+        return NeuralTrainState.create(
+            apply_fn=self.apply,
+            params=params,
+            tx=optimizer,
+            potential_value_fn=self.potential_value_fn,
+            potential_gradient_fn=self.potential_gradient_fn,
+            **kwargs,
+        )
