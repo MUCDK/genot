@@ -19,7 +19,7 @@ class BaseSampler(ABC):
     pass
 
 class DataLoader(BaseSampler):
-    def __init__(self, data: jnp.ndarray, batch_size) -> None:
+    def __init__(self, data: Optional[jnp.ndarray]=None, batch_size: int = 64) -> None:
         super().__init__()
         self.data = data
         self.batch_size= batch_size
@@ -29,12 +29,12 @@ class DataLoader(BaseSampler):
         return self.data[inds,:]
 
 class MixtureNormalSampler(BaseSampler):
-    def __init__(self, centers: Iterable[int], dim: int, batch_size: int, var: float = 1.0) -> None:
+    def __init__(self, centers: Iterable[int], dim: int, var: float = 1.0, batch_size: int = 64) -> None:
         super().__init__()
+        self.batch_size=batch_size
         self.centers = jnp.array(centers)
         self.dim = dim
         self.var = var
-        self.batch_size = batch_size
 
     def __call__(self, key: jax.random.KeyArray) -> jnp.ndarray:
         if len(self.centers)>1:
@@ -129,7 +129,7 @@ class KantorovichGap:
 
     def __call__(
         self, source: jnp.ndarray, T: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
-    ) -> float:
+    ) -> Union[float, Any]:
         T_xz = T(source)
         
         geom = pointcloud.PointCloud(
@@ -140,17 +140,15 @@ class KantorovichGap:
         id_displacement = jnp.mean(
             jax.vmap(self.cost_fn)(source[..., :-self.noise_dim], T_xz)
         )
-        opt_displacement = sinkhorn.Sinkhorn(
+        sinkhorn_output = sinkhorn.Sinkhorn(
             **self.sinkhorn_kwargs
         )(
             linear_problem.LinearProblem(geom)
-        ).reg_ot_cost
-        opt_displacement = jnp.add(
-            opt_displacement,
-            - 2 * geom.epsilon * jnp.log(len(source))
-        )  # use Shannon entropy instead of relative entropy as entropic regularizer to ensure Monge gap positivity
+        )
+        
+        opt_displacement = sinkhorn_output.reg_ot_cost - 2 * geom.epsilon * jnp.log(len(source)) # use Shannon entropy instead of relative entropy as entropic regularizer to ensure Monge gap positivity
 
-        return id_displacement - opt_displacement
+        return id_displacement - opt_displacement, sinkhorn_output
 
     @property
     def cost_fn(self) -> costs.CostFn:
