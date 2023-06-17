@@ -1,67 +1,65 @@
-from typing import Any, Callable, Dict, Iterable, Sequence, Tuple, Union, Optional
+from abc import ABC, abstractmethod
+from types import MappingProxyType
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple, Union
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import optax
-from ott.solvers.nn.models import ModelBase, NeuralTrainState
-import jax
-import jax.numpy as jnp
-from ott.geometry import pointcloud
-from ott.solvers.linear import sinkhorn
-from ott.problems.linear import linear_problem
 import ott.geometry.costs as costs
-from typing import Any, Mapping, Callable
-from types import MappingProxyType
-from abc import ABC, abstractmethod
+from flax.training import train_state
+from ott.geometry import pointcloud
+from ott.problems.linear import linear_problem
+from ott.solvers.linear import sinkhorn
+from ott.solvers.nn.models import ModelBase, NeuralTrainState
+
+from jax.experimental.host_callback import call
 
 class BaseSampler(ABC):
     pass
 
+
 class DataLoader(BaseSampler):
-    def __init__(self, data: Optional[jnp.ndarray]=None, batch_size: int = 64) -> None:
+    def __init__(self, data: Optional[jnp.ndarray] = None, batch_size: int = 64) -> None:
         super().__init__()
         self.data = data
-        self.batch_size= batch_size
+        self.batch_size = batch_size
 
     def __call__(self, key: jax.random.KeyArray) -> jnp.ndarray:
         inds = jax.random.choice(key, len(self.data), shape=[self.batch_size])
-        return self.data[inds,:]
+        return self.data[inds, :]
+
 
 class MixtureNormalSampler(BaseSampler):
     def __init__(self, centers: Iterable[int], dim: int, var: float = 1.0, batch_size: int = 64) -> None:
         super().__init__()
-        self.batch_size=batch_size
+        self.batch_size = batch_size
         self.centers = jnp.array(centers)
         self.dim = dim
         self.var = var
 
     def __call__(self, key: jax.random.KeyArray) -> jnp.ndarray:
-        if len(self.centers)>1:
-            comps_idx = jax.random.categorical(key, jnp.repeat(jnp.log(1.0/len(self.centers)), len(self.centers)), shape=(self.batch_size,)).astype(int)
+        if len(self.centers) > 1:
+            comps_idx = jax.random.categorical(
+                key, jnp.repeat(jnp.log(1.0 / len(self.centers)), len(self.centers)), shape=(self.batch_size,)
+            ).astype(int)
         else:
-            comps_idx = jnp.zeros(self.batch_size,).astype(int)
+            comps_idx = jnp.zeros(
+                self.batch_size,
+            ).astype(int)
         if self.dim > 1:
-            std_normal = jax.random.normal(key, (self.batch_size,self.dim)) 
-        else: 
+            std_normal = jax.random.normal(key, (self.batch_size, self.dim))
+        else:
             std_normal = jax.random.normal(key, (self.batch_size,))
         self.centers[comps_idx]
-        return jnp.reshape(std_normal * self.var + self.centers[comps_idx], (self.batch_size,self.dim))
-        
-
-
-
-        
+        return jnp.reshape(std_normal * self.var + self.centers[comps_idx], (self.batch_size, self.dim))
 
 
 def _concatenate(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
-    return jnp.concatenate((jnp.atleast_2d(a), jnp.atleast_2d(b)),axis=1)
-
-
+    return jnp.concatenate((jnp.atleast_2d(a), jnp.atleast_2d(b)), axis=1)
 
 
 class MLP(ModelBase):
-
     dim_hidden: Sequence[int]
     is_potential: bool = True
     act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.leaky_relu
@@ -75,7 +73,7 @@ class MLP(ModelBase):
             x = jnp.expand_dims(x, 0)
         assert x.ndim == 2, x.ndim
         n_input = x.shape[-1]
-       
+
         z = x
         for n_hidden in self.dim_hidden:
             Wx = nn.Dense(n_hidden, use_bias=True)
@@ -88,14 +86,14 @@ class MLP(ModelBase):
             quad_term = 0.5 * jax.vmap(jnp.dot)(x, x)
             z += quad_term
         elif self.output_dim is None:
-            Wx = nn.Dense(n_input-self.noise_dim, use_bias=True)
+            Wx = nn.Dense(n_input - self.noise_dim, use_bias=True)
             z = Wx(z)
         else:
             Wx = nn.Dense(self.output_dim, use_bias=True)
             z = Wx(z)
 
         return z.squeeze(0) if squeeze else z
-    
+
     def create_train_state(
         self,
         rng: jax.random.PRNGKeyArray,
@@ -113,7 +111,31 @@ class MLP(ModelBase):
             potential_gradient_fn=self.potential_gradient_fn,
             **kwargs,
         )
-    
+
+
+class Simple_MLP(nn.Module):
+    dim_hidden: Sequence[int]
+    act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.selu
+    output_dim: Optional[int] = None
+    final_act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.selu
+
+    def setup(self) -> None:
+        ws = []
+        for i in range(len(self.dim_hidden)):
+            ws.append(nn.Dense(self.dim_hidden[i]))
+        ws.append(nn.Dense(self.output_dim))
+        self.ws = ws
+
+    def __call__(self, x: jnp.ndarray):
+        for i in range(len(self.dim_hidden)):
+            x = self.act_fn(self.ws[i](x))
+        return self.final_act_fn(self.ws[-1](x))
+
+    def create_train_state(
+        self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, input: Union[int, Tuple[int, ...]], **kwargs: Any
+    ) -> NeuralTrainState:
+        params = self.init(rng, jnp.ones(input))["params"]
+        return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
 
 class KantorovichGap:
@@ -128,31 +150,34 @@ class KantorovichGap:
         self.noise_dim = noise_dim
 
     def __call__(
-        self, source: jnp.ndarray, T: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray]
+        self,
+        a: Optional[jnp.ndarray],
+        source: jnp.ndarray,
+        b: Optional[jnp.ndarray],
+        T: Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
     ) -> Union[float, Any]:
         T_xz = T(source)
-        
+        source_flattened = jnp.reshape(source[..., : -self.noise_dim], (source.shape[0], -1))
+        t_xz_flattened = jnp.reshape(T_xz, (T_xz.shape[0], -1))
         geom = pointcloud.PointCloud(
-            x=jnp.reshape(source[..., :-self.noise_dim], (source.shape[0], -1)), y=jnp.reshape(T_xz, (T_xz.shape[0],-1)),
-            **self.geometry_kwargs
+            x=source_flattened,
+            y=t_xz_flattened,
+            **self.geometry_kwargs,
         )
-        
-        id_displacement = jnp.mean(
-            jax.vmap(self.cost_fn)(source[..., :-self.noise_dim], T_xz)
+        id_displacement = jnp.mean(jax.vmap(self.cost_fn)(source_flattened, t_xz_flattened))
+        sinkhorn_output = sinkhorn.Sinkhorn(**self.sinkhorn_kwargs)(
+            linear_problem.LinearProblem(geom)  # linear_problem.LinearProblem(geom, a=a, b=b)
         )
-        sinkhorn_output = sinkhorn.Sinkhorn(
-            **self.sinkhorn_kwargs
-        )(
-            linear_problem.LinearProblem(geom)
-        )
-        
-        opt_displacement = sinkhorn_output.reg_ot_cost - 2 * geom.epsilon * jnp.log(len(source)) # use Shannon entropy instead of relative entropy as entropic regularizer to ensure Monge gap positivity
+
+        opt_displacement = sinkhorn_output.reg_ot_cost - 2 * geom.epsilon * jnp.log(
+            len(source)
+        )  # use Shannon entropy instead of relative entropy as entropic regularizer to ensure Monge gap positivity
 
         return id_displacement - opt_displacement, sinkhorn_output
 
     @property
     def cost_fn(self) -> costs.CostFn:
-        """"
+        """ "
         Set cost function on which Monge gap is instanciated.
         Default is squared euclidean.
         """

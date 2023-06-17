@@ -54,7 +54,7 @@ def main(config: argparse.Namespace):
     # set up model
     unet = UNet(diff_input_output=1)
     state_unet = unet.create_train_state(jax.random.PRNGKey(0), optax.adam(1e-4), (64, 64, 3))
-    kg = KantorovichGapModel(epsilon=0.1, input_dim=[64, 64, 3], noise_dim=1, iterations=5000, neural_net=unet)
+    kg = KantorovichGapModel(epsilon_kant_gap=0.1, input_dim=[64, 64, 3], noise_dim=1, iterations=5000, neural_net=unet)
 
     # start training
     kg(handbags, shoes, callback=bolt_callback)
