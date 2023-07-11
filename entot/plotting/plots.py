@@ -46,7 +46,6 @@ def plot_1D(source, target, t_xz, sinkhorn_output, **kwargs):
     axes[0].legend(fontsize=12, loc="upper left", framealpha=1)
     axes[0].set_title(r"Input $\mathbb{P}$", fontsize=14)
 
-
     # Plotting learnt plan pi_hat between source and P_2#pi_hat(X,Z)
     joint_dist = jnp.concatenate((source, t_xz), axis=1)
     jd = pd.DataFrame(data=joint_dist, columns=["source", "mapped"])
@@ -126,15 +125,14 @@ def plot_1D(source, target, t_xz, sinkhorn_output, **kwargs):
 def plot_images(source, target, t_xz, sinkhorn_output, n_samples: int = 2, k_noise_per_sample: int = 2, **kwargs):
     clear_output(wait=True)
     fig, axes = plt.subplots(n_samples, k_noise_per_sample + 2, figsize=(12, 3), dpi=150)
-    print(sinkhorn_output.matrix.flatten()[:10])
     pi_star_inds = jax.random.categorical(
-        jax.random.PRNGKey(1), logits=jnp.log(sinkhorn_output.matrix.flatten()), shape=(n_samples,))
-    print(pi_star_inds)
+        jax.random.PRNGKey(1), logits=jnp.log(sinkhorn_output.matrix.flatten()), shape=(n_samples,)
+    )
     inds_source = pi_star_inds // len(target)
     inds_target = pi_star_inds % len(target)
-    source= source[inds_source, ...]
-    target=target[inds_target, ...]
-    t_xz = t_xz[inds_target,...]
+    source = source[inds_source, ...]
+    target = target[inds_target, ...]
+    t_xz = t_xz[inds_target, ...]
 
     for i in range(n_samples):
         for j in range(k_noise_per_sample + 2):
@@ -156,10 +154,12 @@ def plot_images(source, target, t_xz, sinkhorn_output, n_samples: int = 2, k_noi
 
 
 def plot_1D_unbalanced(
-    source, target, T_xz, sinkhorn_output, sinkhorn_output_unbalanced, eta_predictions, xi_predictions, **kwargs
+    source, target, t_xz, sinkhorn_output, sinkhorn_output_unbalanced, eta_predictions, xi_predictions, **kwargs
 ):
     clear_output(wait=True)
     fig, axes = plt.subplots(2, 5, figsize=(24, 16), dpi=150)
+    eta_predictions = eta_predictions + 1 if np.sum(eta_predictions) == 0 else eta_predictions
+    xi_predictions = xi_predictions + 1 if np.sum(eta_predictions) == 0 else xi_predictions
 
     a, b = sinkhorn_output_unbalanced.matrix.sum(axis=1), sinkhorn_output_unbalanced.matrix.sum(axis=0)
 
@@ -217,7 +217,7 @@ def plot_1D_unbalanced(
         x=source[:, 0],
         color="darkseagreen",
         fill=True,
-        weights=eta_predictions,
+        weights=eta_predictions[:, 0],
         edgecolor="black",
         alpha=0.95,
         ax=axes[0][2],
@@ -227,7 +227,7 @@ def plot_1D_unbalanced(
 
     # Plotting P_2#pi_hat(X,Z)
     sns.kdeplot(
-        y=T_xz[:, 0],
+        y=t_xz[:, 0],
         color="sandybrown",
         fill=True,
         edgecolor="black",
@@ -239,7 +239,7 @@ def plot_1D_unbalanced(
 
     # Plotting \eta(x) * P_2#pi_hat(X,Z)
     sns.kdeplot(
-        y=T_xz[:, 0],
+        y=t_xz[:, 0],
         color="sandybrown",
         fill=True,
         weights=a,
@@ -251,7 +251,7 @@ def plot_1D_unbalanced(
     axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot T_{\theta}\#(\mathbb{P}\times\mathbb{S})$", fontsize=14)
 
     # Plotting learnt plan pi_hat between learnt rescaled source and P_2#pi_hat(X,Z)
-    joint_dist = jnp.concatenate((source, T_xz), axis=1)
+    joint_dist = jnp.concatenate((source, t_xz), axis=1)
     jd = pd.DataFrame(data=joint_dist, columns=["source", "mapped"])
     sns.kdeplot(
         data=jd,
@@ -266,7 +266,7 @@ def plot_1D_unbalanced(
     axes[1][0].set_title(r"$\hat{\pi}_{\theta}$", fontsize=14)
 
     # Plotting ground truth plan between learnt rescaled source and P_2#pi_hat(X,Z)
-    geom = ott.geometry.pointcloud.PointCloud(source, T_xz, epsilon=kwargs["epsilon"])
+    geom = ott.geometry.pointcloud.PointCloud(source, t_xz, epsilon=kwargs["epsilon"])
     out = ott.solvers.linear.sinkhorn.Sinkhorn()(
         ott.problems.linear.linear_problem.LinearProblem(geom, a=a, b=a, tau_a=kwargs["tau_a"], tau_b=kwargs["tau_b"])
     )
@@ -275,7 +275,7 @@ def plot_1D_unbalanced(
     )
     inds_source = pi_star_inds // len(target)
     inds_target = pi_star_inds % len(target)
-    data = _concatenate(source[inds_source], T_xz[inds_target])
+    data = _concatenate(source[inds_source], t_xz[inds_target])
     gt = pd.DataFrame(data=data, columns=["source", "mapped_source"])
     sns.kdeplot(
         data=gt,
@@ -309,7 +309,7 @@ def plot_1D_unbalanced(
         y=target[:, 0],
         color="wheat",
         fill=True,
-        weights=xi_predictions,
+        weights=xi_predictions[:, 0],
         edgecolor="black",
         alpha=0.95,
         ax=axes[1][3],
@@ -328,6 +328,51 @@ def plot_1D_unbalanced(
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
     axes[1][4].set_title(r"$\mathbb{Q}$", fontsize=14)
+
+    fig.tight_layout(pad=0.01)
+    fig.show()
+    display(fig)
+
+    return fig
+
+
+def scatter_plot_2d(source, target, t_xz, sinkhorn_output, **_):
+    clear_output(wait=True)
+    fig, axes = plt.subplots(1, 4, figsize=(10, 3), dpi=150)
+
+    axes[0].set_xlim((-1.5, 1.5))
+    axes[0].set_ylim((-1, 10.0))
+
+    axes[1].set_xlim((-1.5, 1.5))
+    axes[1].set_ylim((-1, 10.0))
+
+    axes[2].set_xlim((-1.5, 1.5))
+    axes[2].set_ylim((-1, 10.0))
+
+    axes[3].set_xlim((-1.5, 1.5))
+    axes[3].set_ylim((-1, 10.0))
+
+    axes[0].scatter(target[:, 0], target[:, 1])
+    axes[0].scatter(t_xz[:, 0], t_xz[:, 1])
+
+    axes[1].scatter(source[:, 0], source[:, 1])
+    axes[1].scatter(t_xz[:, 0], t_xz[:, 1])
+
+    pi_star_inds = jax.random.categorical(
+        jax.random.PRNGKey(0), logits=jnp.log(sinkhorn_output.matrix.flatten()), shape=(1000,)
+    )
+    inds_source = pi_star_inds // 300
+    inds_target = pi_star_inds % 300
+    source_gt = source[inds_source]
+    target_gt = t_xz[inds_target]
+    indices = jax.random.randint(jax.random.PRNGKey(0), (60,), 0, len(source_gt))
+    axes[2].plot([source_gt[indices, 0], target_gt[indices, 0]], [source_gt[indices, 1], target_gt[indices, 1]], "ro-")
+
+    indices = jax.random.randint(jax.random.PRNGKey(0), (60,), 0, len(source_gt))
+    axes[3].plot([source[indices, 0], t_xz[indices, 0]], [source[indices, 1], t_xz[indices, 1]], "ro-")
+
+    axes[3].scatter(source[:, 0], source[:, 1])
+    axes[3].scatter(t_xz[:, 0], t_xz[:, 1])
 
     fig.tight_layout(pad=0.01)
     fig.show()

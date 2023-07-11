@@ -11,7 +11,6 @@ def bolt_config():
     config.priority = 1
     config.project_id = "mlr_understanding"
 
-
     config.resources = ml_collections.ConfigDict()
     res = config.resources
     res.docker_image = "docker.apple.com/tata-antares/mlx-cuda-11.8-cudnn8-ubuntu20.04-nccl-2.17.1-efa-1.22.1"

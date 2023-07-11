@@ -1,11 +1,10 @@
 import os
-import sys
 import shutil
+import sys
 
 import jax
 from absl import app, flags
 from ml_collections import config_flags
-
 
 sys.path.append("/mnt/task_runtime/experiments")  # to get the import that works
 # needs to have `main()` method which accepts the config

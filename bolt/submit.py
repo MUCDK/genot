@@ -29,9 +29,7 @@ def launch(config, tar, interactive):
     py_code += "null = None\n"
     py_code += "false = False\n\n"
     py_code += "def get_config():\n"
-    py_code += with_indent(
-        "return ml_collections.ConfigDict(" + config.to_json(indent=4)
-    )
+    py_code += with_indent("return ml_collections.ConfigDict(" + config.to_json(indent=4))
     py_code += ")\n"
 
     with open(filename, "w") as fin:

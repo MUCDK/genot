@@ -8,12 +8,12 @@ import jax.numpy as jnp
 import optax
 import ott.geometry.costs as costs
 from flax.training import train_state
+from jax.experimental.host_callback import call
 from ott.geometry import pointcloud
 from ott.problems.linear import linear_problem
 from ott.solvers.linear import sinkhorn
 from ott.solvers.nn.models import ModelBase, NeuralTrainState
 
-from jax.experimental.host_callback import call
 
 class BaseSampler(ABC):
     pass
@@ -185,3 +185,51 @@ class KantorovichGap:
             return self.geometry_kwargs["cost_fn"]
         else:
             return costs.SqEuclidean()
+
+
+class MLP_FM(ModelBase):
+    dim_hidden: Sequence[int]
+    is_potential: bool = False
+    act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.leaky_relu
+    noise_dim: int = 0
+    output_dim: Optional[int] = None
+
+    @nn.compact
+    def __call__(self, t: jnp.ndarray, x: jnp.ndarray, noise: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
+        squeeze = x.ndim == 1
+        if squeeze:
+            x = jnp.expand_dims(x, 0)
+        assert x.ndim == 2, x.ndim
+        n_input = x.shape[-1]
+
+        z = jnp.concatenate((x, noise, t), axis=-1)
+        for n_hidden in self.dim_hidden:
+            Wx = nn.Dense(n_hidden, use_bias=True)
+            z = self.act_fn(Wx(z))
+
+        if self.is_potential:
+            Wx = nn.Dense(1, use_bias=True)
+            z = Wx(z).squeeze(-1)
+
+            quad_term = 0.5 * jax.vmap(jnp.dot)(x, x)
+            z += quad_term
+        elif self.output_dim is None:
+            Wx = nn.Dense(n_input - self.noise_dim, use_bias=True)
+            z = Wx(z)
+        else:
+            Wx = nn.Dense(self.output_dim, use_bias=True)
+            z = Wx(z)
+
+        return z.squeeze(0) if squeeze else z
+
+    def create_train_state(
+        self,
+        rng: jax.random.PRNGKeyArray,
+        optimizer: optax.OptState,
+        source_dim: int,
+        t_dim: int,
+        noise_dim: int,
+        **kwargs: Any,
+    ) -> NeuralTrainState:
+        params = self.init(rng, jnp.ones((*t_dim, 1)), jnp.ones(source_dim), jnp.ones(noise_dim))["params"]
+        return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
