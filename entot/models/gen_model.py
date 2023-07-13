@@ -63,26 +63,6 @@ class MLP_FM(ModelBase):
         Wc = nn.Dense(self.dim_hidden[0], use_bias=True)
         condition = self.act_fn(Wc(condition))
 
-        # try to avoid this
-        #if condition.ndim == 3:
-        #    condition = jnp.squeeze(condition)
-
-        # try to avoid this
-        #if latent.ndim == 3:
-        #    latent = jnp.squeeze(latent)
-
-
-        # try to avoid this
-        #squeeze = condition.ndim == 1
-        #if squeeze:
-        #    condition = jnp.expand_dims(condition, 0)
-
-
-        # try to avoid this
-        #squeeze = latent.ndim == 1
-        #if squeeze:
-        #    latent = jnp.expand_dims(latent, 0)
-
         assert condition.ndim == 2, condition.ndim
         assert latent.ndim == 2, latent.dim
 
@@ -143,6 +123,49 @@ class MLP_FM2(ModelBase):
 
         z = jnp.concatenate((condition, latent, t), axis=-1)
         z = Block(dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
+
+        Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
+        z = Wx(z)
+
+        return z
+
+    def create_train_state(
+        self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, source_dim: int, latent_dim: int, **kwargs: Any
+    ) -> NeuralTrainState:
+        params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,source_dim)), jnp.ones((1,latent_dim)))["params"]
+        return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
+
+class MLP_FM3(ModelBase):
+    output_dim: int
+    t_embed_dim: int
+    condition_embed_dim: int
+    joint_hidden_dim: int
+    is_potential: bool = False
+    act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
+    latent_dim: int = 0
+    n_frequencies: int = 1
+
+    def time_encoder(self, t: jnp.array) -> jnp.array:
+        freq = 2 * jnp.arange(self.n_frequencies) * jnp.pi
+        t = freq * t
+        return jnp.concatenate((jnp.cos(t), jnp.sin(t)), axis=-1)
+
+    @nn.compact
+    def __call__(self, t: float, condition: jnp.ndarray, latent: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
+        t = jnp.full(shape=(len(condition), 1), fill_value=t)
+        t = self.time_encoder(t)
+        t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
+
+        condition = Block(dim=self.condition_embed_dim, out_dim=self.condition_embed_dim, activation_fn=self.act_fn)(condition)
+
+        z = jnp.concatenate((condition, latent, t), axis=-1)
+        z = Block(num_layers=1,dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
+
+        z = jnp.concatenate((condition, z), axis=-1)
+        z = Block(num_layers=1,dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
+
+        z = jnp.concatenate((condition, z), axis=-1)
+        z = Block(num_layers=1,dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
 
         Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
         z = Wx(z)
@@ -221,11 +244,6 @@ class OTFlowMatching:
             x_batch, y_batch = tfds.as_numpy(next(x_loader)), tfds.as_numpy(next(y_loader))
             self.rng, rng_time, rng_noise = jax.random.split(self.rng, 3)
             source_batch = jnp.tile(x_batch, (self.k_noise_per_x, *((1,) * (x_batch.ndim - 1))))
-            #latent_shape = (
-            #    (*source_batch.shape[:-1], self.output_dim)
-            #    if len(source_batch.shape[:-1]) > 1
-            #    else (source_batch.shape[:-1][0], self.output_dim)
-            #)
             latent_shape = (len(x_batch),)
             latent_batch = self.noise_fn(rng_noise, shape=latent_shape) * self.noise_std
          
@@ -289,7 +307,7 @@ class OTFlowMatching:
         @partial(jax.jit, static_argnames=["solver", "epsilon", "k_neighbors"])
         def match_pairs(x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, k_neighbors: int) -> Tuple[jnp.array, jnp.array]:
             cm = create_cost_matrix(x, y, k_neighbors)
-            geom = ott.geometry.geometry.Geometry(cost_matrix=cm, epsilon=1e-1) # add scale_cost
+            geom = ott.geometry.geometry.Geometry(cost_matrix=cm, epsilon=epsilon) # add scale_cost
             out = solver(ott.problems.linear.linear_problem.LinearProblem(geom))
             pi_star_inds = jax.random.categorical(
                 jax.random.PRNGKey(0), logits=jnp.log(out.matrix.flatten()), shape=(len(x),)
@@ -319,7 +337,7 @@ class OTFlowMatching:
 
         def loss_fn(params_mlp: jnp.array, apply_fn_mlp: Callable, batch: Dict[str, jnp.array]):
             psi_t_eval = psi_t(batch["latent"], batch["target"], batch["time"])
-            mlp_pred = apply_fn_mlp({"params": params_mlp}, batch["time"], psi_t_eval, batch["source"])
+            mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], latent=psi_t_eval, condition=batch["source"])
             d_psi = batch["target"] - batch["latent"]
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
@@ -365,7 +383,7 @@ class OriginalFlowMatching:
         self.rng = jax.random.PRNGKey(0)
         self.iterations = iterations
         self.sig_min = sig_min
-        
+        self.metrics = {"loss": []}
         self.neural_net = neural_net
 
         self.state_mlp: Optional[TrainState] = None
@@ -391,7 +409,8 @@ class OriginalFlowMatching:
             batch["source"] = x_batch
             batch["target"] = y_batch
             batch["time"] = jax.random.uniform(rng_time, (len(x_batch), 1))
-            self.state_mlp = self.step_fn(self.state_mlp, batch, self.sig_min)
+            loss, self.state_mlp = self.step_fn(self.state_mlp, batch, self.sig_min)
+            self.metrics["loss"].append(loss)
 
     def _get_match_fn(self) -> Callable:
         
@@ -427,7 +446,7 @@ class OriginalFlowMatching:
             grad_fn = jax.value_and_grad(loss_fn, argnums=0, has_aux=False)
             val, grads_mlp = grad_fn(state_neural_net.params, state_neural_net.apply_fn, batch, sig_min)
 
-            return state_neural_net.apply_gradients(grads=grads_mlp)
+            return val, state_neural_net.apply_gradients(grads=grads_mlp)
         
         return step_fn
     
@@ -485,4 +504,92 @@ class MLP_no_noise(ModelBase):
         self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, source_dim: int, latent_dim: int, **kwargs: Any
     ) -> NeuralTrainState:
         params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,source_dim)))["params"]
+        return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
+
+
+
+class MLP_FM_VAE(ModelBase):
+    output_dim: int
+    t_embed_dim: int
+    condition_embed_dim: int
+    joint_hidden_dim: int
+    is_potential: bool = False
+    act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
+    latent_dim: int = 0
+    n_frequencies: int = 1
+
+    def time_encoder(self, t: jnp.array) -> jnp.array:
+        freq = 2 * jnp.arange(self.n_frequencies) * jnp.pi
+        t = freq * t  # [..., None]
+        return jnp.concatenate((jnp.cos(t), jnp.sin(t)), axis=-1)
+
+    @nn.compact
+    def __call__(self, t: float, condition: jnp.ndarray, latent: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
+        
+        t = jnp.full(shape=(len(condition), 1), fill_value=t)
+        t = self.time_encoder(t)
+        t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
+        
+        condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
+        #latent = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(latent)
+        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(jnp.concatenate((condition, t), axis=-1))
+
+        condition = condition + latent * variance
+
+        z = jnp.concatenate((condition, t), axis=-1)
+        z = Block(num_layers=3, dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
+
+        Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
+        z = Wx(z)
+
+        return z
+
+
+    def create_train_state(
+        self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, source_dim: int, latent_dim: int, **kwargs: Any
+    ) -> NeuralTrainState:
+        params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,source_dim)), jnp.ones((1,latent_dim)))["params"]
+        return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
+
+class MLP_FM_VAE_all_dims(ModelBase):
+    output_dim: int
+    t_embed_dim: int
+    condition_embed_dim: int
+    joint_hidden_dim: int
+    is_potential: bool = False
+    act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
+    latent_dim: int = 0
+    n_frequencies: int = 1
+
+    def time_encoder(self, t: jnp.array) -> jnp.array:
+        freq = 2 * jnp.arange(self.n_frequencies) * jnp.pi
+        t = freq * t  # [..., None]
+        return jnp.concatenate((jnp.cos(t), jnp.sin(t)), axis=-1)
+
+    @nn.compact
+    def __call__(self, t: float, condition: jnp.ndarray, latent: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
+        
+        t = jnp.full(shape=(len(condition), 1), fill_value=t)
+        t = self.time_encoder(t)
+        t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
+        
+        condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
+        #latent = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(latent)
+        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(jnp.concatenate((condition, t), axis=-1))
+
+        condition = condition + latent * variance
+
+        z = jnp.concatenate((condition, t), axis=-1)
+        z = Block(num_layers=3, dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
+
+        Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
+        z = Wx(z)
+
+        return z
+
+
+    def create_train_state(
+        self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, source_dim: int, latent_dim: int, **kwargs: Any
+    ) -> NeuralTrainState:
+        params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,source_dim)), jnp.ones((1,latent_dim)))["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
