@@ -27,7 +27,7 @@ from tqdm import tqdm
 import jax
 import jax.numpy as jnp
 import numpy as np
-
+import collections
 import matplotlib.pyplot as plt
 import mpl_toolkits.mplot3d.axes3d as p3
 from IPython import display
@@ -194,6 +194,12 @@ class OTFlowMatching:
         epsilon: float = 1e-2,
         eps_match_latent_fn: float = 1e-2,
         cost_fn: str = ott.geometry.costs.SqEuclidean(),
+        mlp_eta: Callable[[jnp.ndarray], float] = None,
+        mlp_xi: Callable[[jnp.ndarray], float] = None,
+        unbalanced_kwargs: Dict[str, Any] = {},
+        callback: Optional[Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray], Any]] = None,
+        callback_kwargs: Dict[str, Any] = {},
+        callback_iters: int = 10,
         seed: int = 0,
         **kwargs: Any,
     ) -> None:
@@ -209,12 +215,20 @@ class OTFlowMatching:
         self.iterations = iterations
         self.neural_net = neural_net
         self.state_mlp: Optional[TrainState] = None
-        self.metrics = {"loss": []}
+        self.metrics = {"loss": [] ,"loss_eta": [], "loss_xi": []}
         self.ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn() if ot_solver is None else ot_solver
         self.latent_to_data_solver = latent_to_data_solver
         self.epsilon = epsilon
         self.eps_match_latent_fn = eps_match_latent_fn
         self.cost_fn = cost_fn
+        self.mlp_eta = mlp_eta
+        self.mlp_xi = mlp_xi
+        self.state_eta: Optional[TrainState] = None
+        self.state_xi: Optional[TrainState] = None
+        self.unbalanced_kwargs = unbalanced_kwargs
+        self.callback = callback
+        self.callback_kwargs = callback_kwargs
+        self.callback_iters = callback_iters
 
         self.setup(**kwargs)
 
@@ -230,14 +244,26 @@ class OTFlowMatching:
             else:
                 self.match_fn = self._get_gromov_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn)
         self.match_latent_fn = self._get_match_latent_fn(self.latent_to_data_solver, epsilon=self.eps_match_latent_fn) if self.latent_to_data_solver is not None else lambda x, *_, **__: x
+        if self.mlp_eta is not None:
+            opt_eta = kwargs["opt_eta"] if "opt_eta" in kwargs else optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
+            self.state_eta = self.mlp_eta.create_train_state(self.rng, opt_eta, self.input_dim)
+        if self.mlp_xi is not None:
+            opt_xi = kwargs["opt_xi"] if "opt_xi" in kwargs else optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
+            self.state_xi = self.mlp_xi.create_train_state(self.rng, opt_xi, self.output_dim)
 
-    def __call__(self, x: jnp.array, y: jnp.array, batch_size_source: int, batch_size_target: int) -> Any:
-        x_loader = iter(
-            tf.data.Dataset.from_tensor_slices(x).repeat().shuffle(buffer_size=10_000).batch(batch_size_source)
-        )
-        y_loader = iter(
-            tf.data.Dataset.from_tensor_slices(y).repeat().shuffle(buffer_size=10_000).batch(batch_size_target)
-        )
+    def __call__(self, x: Union[jnp.array, collections.Iterable], y: Union[jnp.array, collections.Iterable], batch_size_source: int, batch_size_target: int) -> Any:
+        if isinstance(x, collections.Iterable):
+            x_loader = x
+        else:
+            x_loader = iter(
+                tf.data.Dataset.from_tensor_slices(x).repeat().shuffle(buffer_size=10_000).batch(batch_size_source)
+            )
+        if isinstance(y, collections.Iterable):
+            y_loader = y
+        else:
+            y_loader = iter(
+                tf.data.Dataset.from_tensor_slices(y).repeat().shuffle(buffer_size=10_000).batch(batch_size_target)
+            )
 
         batch: Dict[str, jnp.array] = {}
         for _ in tqdm(range(self.iterations)):
@@ -270,6 +296,25 @@ class OTFlowMatching:
             return x[inds_source], y[inds_target]
 
         return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn)
+
+    def _get_fused_gromov_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str) -> Callable:
+        @jax.jit
+        def match_pairs(x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], solver: Any, epsilon: float, cost_fn: str, fused_penalty: float = 0.0) -> Tuple[jnp.array, jnp.array]:
+            geom_xx = pointcloud.PointCloud(x=x[0], y=x[0], cost_fn=cost_fn, scale_cost="mean")
+            geom_yy = pointcloud.PointCloud(x=y[0], y=y[0], cost_fn=cost_fn, scale_cost="mean")
+            geom_xy = pointcloud.PointCloud(x=x[1], y=y[1], cost_fn=cost_fn, scale_cost="mean")
+            prob = quadratic_problem.QuadraticProblem(geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty)
+            out = solver(prob)
+            
+            pi_star_inds = jax.random.categorical(
+                jax.random.PRNGKey(0), logits=jnp.log(out.matrix.flatten()), shape=(len(x),)
+            )
+            inds_source = pi_star_inds // len(y)
+            inds_target = pi_star_inds % len(y)
+            return x[inds_source], y[inds_target]
+
+        return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn)
+       
 
     def _get_gromov_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str) -> Callable:
         @jax.jit

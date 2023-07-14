@@ -1,10 +1,47 @@
-from typing import Any, Tuple, Union
+from typing import Any, Tuple, Union, Callable
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import optax
 from ott.solvers.nn.models import ModelBase, NeuralTrainState
+
+
+class GNOT_MLP(ModelBase):
+    output_dim: int
+    t_embed_dim: int
+    condition_embed_dim: int
+    joint_hidden_dim: int
+    is_potential: bool = False
+    act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
+    latent_dim: int = 0
+    n_frequencies: int = 1
+
+    def time_encoder(self, t: jnp.array) -> jnp.array:
+        freq = 2 * jnp.arange(self.n_frequencies) * jnp.pi
+        t = freq * t  # [..., None]
+        return jnp.concatenate((jnp.cos(t), jnp.sin(t)), axis=-1)
+
+    @nn.compact
+    def __call__(self, t: float, condition: jnp.ndarray, latent: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
+        
+        t = jnp.full(shape=(len(condition), 1), fill_value=t)
+        t = self.time_encoder(t)
+        t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
+        
+        condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
+        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(jnp.concatenate((condition, t), axis=-1))
+
+        condition = condition + latent * variance
+
+        z = jnp.concatenate((condition, t), axis=-1)
+        z = Block(num_layers=3, dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
+
+        Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
+        z = Wx(z)
+
+        return z
+
 
 
 class Block(nn.Module):
