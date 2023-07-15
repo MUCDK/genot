@@ -40,6 +40,13 @@ from ott.solvers.quadratic import gromov_wasserstein
 from entot.models.utils import MLP, MLP_FM
 
 
+def sample_indices_from_tmap(key: jax.random.PRNGKeyArray, tmap: jnp.ndarray, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]
+    n_samples = n_samples if isinstance(n_samples, int) else tmap.shape[1]
+    pi_star_inds = jax.random.categorical(
+                jax.random.PRNGKey(key), logits=jnp.log(tmap.flatten()), shape=(n_samples,)
+            )
+    return pi_star_inds // len(tmap.shape[1]), pi_star_inds % len(tmap.shape[1])
+    
 class MLP_FM(ModelBase):
     output_dim: int
     dim_hidden: Sequence[int]
@@ -186,9 +193,9 @@ class OTFlowMatching:
         input_dim: int,
         output_dim: int,
         iterations: int,
-        opt: Optional[Any] = None,
+        optimizer: Optional[Any] = None,
         k_noise_per_x: int = 1,
-        noise_std: float = 1.0,
+        noise_std: float = 0.1,
         ot_solver: Optional[Any] = None,
         latent_to_data_solver: Optional[Any] = None,
         epsilon: float = 1e-2,
@@ -203,12 +210,12 @@ class OTFlowMatching:
         seed: int = 0,
         **kwargs: Any,
     ) -> None:
-        self.optimizer = optax.adamw(learning_rate=1e-4, weight_decay=1e-10) if opt is None else opt
+        self.optimizer = optax.adamw(learning_rate=1e-4, weight_decay=1e-10) if optimizer is None else optimizer
         self.noise_fn = partial(
             jax.random.multivariate_normal, mean=jnp.zeros((output_dim,)), cov=jnp.diag(jnp.ones((output_dim,)))
         )
         self.input_dim = input_dim
-        self.output_dim = output_dim  # note that output_dim == latent_dim/noise_dim
+        self.output_dim = output_dim
         self.noise_std = noise_std
         self.rng = jax.random.PRNGKey(seed)
         self.k_noise_per_x: int = k_noise_per_x
@@ -268,49 +275,44 @@ class OTFlowMatching:
         batch: Dict[str, jnp.array] = {}
         for _ in tqdm(range(self.iterations)):
             x_batch, y_batch = tfds.as_numpy(next(x_loader)), tfds.as_numpy(next(y_loader))
-            self.rng, rng_time, rng_noise = jax.random.split(self.rng, 3)
+            self.rng, rng_time, rng_noise, rng_match, rng_latent_match = jax.random.split(self.rng, 5)
             source_batch = jnp.tile(x_batch, (self.k_noise_per_x, *((1,) * (x_batch.ndim - 1))))
             latent_shape = (len(x_batch),)
             latent_batch = self.noise_fn(rng_noise, shape=latent_shape) * self.noise_std
          
-            source_batch, y_batch = self.match_fn(source_batch, y_batch)
-            latent_batch = self.match_latent_fn(latent_batch, y_batch)
+            source_batch, y_batch = self.match_fn(rng_match, source_batch, y_batch)
+            latent_batch = self.match_latent_fn(rng_latent_match, latent_batch, y_batch)
             batch["latent"] = latent_batch
             batch["source"] = source_batch
             batch["target"] = y_batch
             batch["time"] = jax.random.uniform(rng_time, (len(source_batch), 1))
          
-            loss, self.state_mlp = self.step_fn(self.state_mlp, batch)
-            self.metrics["loss"].append(loss)
+            metrics, self.state_mlp = self.step_fn(self.state_mlp, batch)
+            for key, value in metrics.items():
+                self.metrics[key].append(value)
 
     def _get_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str) -> Callable:
         @jax.jit
-        def match_pairs(x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, cost_fn: str) -> Tuple[jnp.array, jnp.array]:
+        def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, cost_fn: str, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
             geom = ott.geometry.pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost="mean", cost_fn=cost_fn)
             out = solver(ott.problems.linear.linear_problem.LinearProblem(geom))
-            pi_star_inds = jax.random.categorical(
-                jax.random.PRNGKey(0), logits=jnp.log(out.matrix.flatten()), shape=(len(x),)
-            )
-            inds_source = pi_star_inds // len(y)
-            inds_target = pi_star_inds % len(y)
+            inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
+            
             return x[inds_source], y[inds_target]
 
         return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn)
 
     def _get_fused_gromov_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str) -> Callable:
         @jax.jit
-        def match_pairs(x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], solver: Any, epsilon: float, cost_fn: str, fused_penalty: float = 0.0) -> Tuple[jnp.array, jnp.array]:
+        def match_pairs(key: jax.random.PRNGKeyArray, x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], solver: Any, epsilon: float, cost_fn: str, fused_penalty: float = 0.0, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
             geom_xx = pointcloud.PointCloud(x=x[0], y=x[0], cost_fn=cost_fn, scale_cost="mean")
             geom_yy = pointcloud.PointCloud(x=y[0], y=y[0], cost_fn=cost_fn, scale_cost="mean")
             geom_xy = pointcloud.PointCloud(x=x[1], y=y[1], cost_fn=cost_fn, scale_cost="mean")
             prob = quadratic_problem.QuadraticProblem(geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty)
             out = solver(prob)
+
+            inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
             
-            pi_star_inds = jax.random.categorical(
-                jax.random.PRNGKey(0), logits=jnp.log(out.matrix.flatten()), shape=(len(x),)
-            )
-            inds_source = pi_star_inds // len(y)
-            inds_target = pi_star_inds % len(y)
             return x[inds_source], y[inds_target]
 
         return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn)
@@ -318,17 +320,14 @@ class OTFlowMatching:
 
     def _get_gromov_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str) -> Callable:
         @jax.jit
-        def match_pairs(x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, cost_fn: str) -> Tuple[jnp.array, jnp.array]:
+        def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, cost_fn: str, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
             geom_xx = pointcloud.PointCloud(x=x, y=x, cost_fn=cost_fn, scale_cost="mean")
             geom_yy = pointcloud.PointCloud(x=y, y=y, cost_fn=cost_fn, scale_cost="mean")
             prob = quadratic_problem.QuadraticProblem(geom_xx, geom_yy)
             out = solver(prob)
             
-            pi_star_inds = jax.random.categorical(
-                jax.random.PRNGKey(0), logits=jnp.log(out.matrix.flatten()), shape=(len(x),)
-            )
-            inds_source = pi_star_inds // len(y)
-            inds_target = pi_star_inds % len(y)
+            inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
+            
             return x[inds_source], y[inds_target]
 
         return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn)
@@ -365,16 +364,16 @@ class OTFlowMatching:
 
     def _get_match_latent_fn(self, ot_solver: Any, epsilon: float) -> Callable:
         @jax.jit
-        def match_left_to_right(x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float) -> Tuple[jnp.array, jnp.array]:
+        def match_latent_to_data(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float) -> Tuple[jnp.array, jnp.array]:
             geom = ott.geometry.pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost="mean")
             out = solver(ott.problems.linear.linear_problem.LinearProblem(geom))
             inds_source = jax.vmap(
-                lambda tmap: jax.random.categorical(jax.random.PRNGKey(0), logits=jnp.log(tmap), shape=(1,))
+                lambda tmap: jax.random.categorical(key, logits=jnp.log(tmap), shape=(1,))
             )(out.matrix)
 
             return x[jnp.squeeze(inds_source)]
 
-        return partial(match_left_to_right, solver=ot_solver, epsilon=epsilon)
+        return partial(match_latent_to_data, solver=ot_solver, epsilon=epsilon)
 
     def _get_step_fn(self) -> Callable:
         def psi_t(x_0, x_1, t):
@@ -391,9 +390,10 @@ class OTFlowMatching:
         @jax.jit
         def step_fn(state_neural_net: TrainState, batch: Dict[str, jnp.array]):
             grad_fn = jax.value_and_grad(loss_fn, argnums=0, has_aux=False)
-            val, grads_mlp = grad_fn(state_neural_net.params, state_neural_net.apply_fn, batch)
-
-            return val, state_neural_net.apply_gradients(grads=grads_mlp)
+            loss, grads_mlp = grad_fn(state_neural_net.params, state_neural_net.apply_fn, batch)
+            metrics = {}
+            metrics["loss"] = loss
+            return metrics, state_neural_net.apply_gradients(grads=grads_mlp)
 
         return step_fn
 
