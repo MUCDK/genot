@@ -7,35 +7,34 @@ import diffrax
 import equinox as eqx  # https://github.com/patrick-kidger/equinox
 import flax.linen as nn
 import jax
-import jax.nn as jnn
 import jax.numpy as jnp
-import jax.random as jrandom
-import matplotlib.pyplot as plt
 import numpy as np
 import optax  # https://github.com/deepmind/optax
 import types
 import ott
+from ott.solvers.linear import sinkhorn
 import pandas as pd
 import tensorflow as tf
 import tensorflow_datasets as tfds
 from flax.training import train_state
 from flax.training.train_state import TrainState
 from ott.solvers.nn.models import ModelBase, NeuralTrainState
+from ott.solvers import was_solver
 from sklearn.datasets import make_moons, make_swiss_roll
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
+from ott.geometry import costs
 import jax
 import jax.numpy as jnp
 import numpy as np
 import collections
 import matplotlib.pyplot as plt
 import mpl_toolkits.mplot3d.axes3d as p3
-from IPython import display
-from matplotlib import animation, cm
 
-from ott.geometry import pointcloud
+from ott.geometry import pointcloud, graph, geometry
 from ott.problems.quadratic import quadratic_problem
 from ott.solvers.quadratic import gromov_wasserstein
+from ott.problems.linear import linear_problem
 
 from entot.models.utils import MLP, MLP_FM
 
@@ -196,14 +195,14 @@ class OTFlowMatching:
         input_dim: int,
         output_dim: int,
         iterations: int,
+        ot_solver: Type[was_solver.WassersteinSolver],
         optimizer: Optional[Any] = None,
         k_noise_per_x: int = 1, # TODO(@MUCDK) remove?
         noise_std: float = 0.1,
-        ot_solver: Optional[Any] = None,
-        latent_to_data_solver: Optional[Any] = None,
+        solver_latent_to_data: Optional[Any] = Type[was_solver.WassersteinSolver],
         epsilon: float = 1e-2,
         eps_match_latent_fn: float = 1e-2,
-        cost_fn: str = ott.geometry.costs.SqEuclidean(),
+        cost_fn: Union[costs.CostFn, Literal["graph"]] = costs.SqEuclidean(),
         mlp_eta: Callable[[jnp.ndarray], float] = None,
         mlp_xi: Callable[[jnp.ndarray], float] = None,
         tau_a: float = 1.0,
@@ -230,14 +229,16 @@ class OTFlowMatching:
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.noise_std = noise_std
-        self.k_noise_per_x: int = k_noise_per_x
+        self.k_noise_per_x = k_noise_per_x
         
-        # OT matching parameters
-        self.ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn() if ot_solver is None else ot_solver
+        # OT data-data matching parameters
+        self.ot_solver = ot_solver
         self.epsilon = epsilon
-        self.eps_match_latent_fn = eps_match_latent_fn
-        self.latent_to_data_solver = latent_to_data_solver
         self.cost_fn = cost_fn
+
+        # OT latent-data matching parameters
+        self.solver_latent_to_data = sinkhorn.Sinkhorn() if solver_latent_to_data is None else solver_latent_to_data
+        self.epsilon_latent_to_data = eps_match_latent_fn
         
         # unbalancedness parameters
         self.mlp_eta = mlp_eta
@@ -246,8 +247,9 @@ class OTFlowMatching:
         self.state_xi: Optional[TrainState] = None
         self.tau_a: float = tau_a
         self.tau_b: float = tau_b
-        self.unbalanced_kwargs = unbalanced_kwargs
+        self.unbalanced_kwargs = unbalanced_kwargs # e.g. "opt_eta", "opt_xi"
 
+        # callback parameteres
         self.callback = callback
         self.callback_kwargs = callback_kwargs
         self.callback_iters = callback_iters
@@ -261,12 +263,12 @@ class OTFlowMatching:
         if self.cost_fn == "graph":
             self.match_fn = self._get_match_fn_graph(self.ot_solver, epsilon=self.epsilon,  k_neighbors=kwargs.pop("k_neighbors", 30))
         else:
-            if isinstance(self.ot_solver, ott.solvers.linear.sinkhorn.Sinkhorn):
-                self.match_fn = self._get_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn)
+            if isinstance(self.ot_solver, sinkhorn.Sinkhorn):
+                self.match_fn = self._get_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b)
             else:
                 self.match_fn = self._get_gromov_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn)
 
-        self.match_latent_fn = self._get_match_latent_fn(self.latent_to_data_solver, epsilon=self.eps_match_latent_fn) if self.latent_to_data_solver is not None else lambda x, *_, **__: x
+        self.match_latent_fn = self._get_match_latent_fn(self.solver_latent_to_data, epsilon=self.eps_match_latent_fn) if self.solver_latent_to_data is not None else lambda x, *_, **__: x
         if self.mlp_eta is not None:
             opt_eta = kwargs["opt_eta"] if "opt_eta" in kwargs else optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
             self.state_eta = self.mlp_eta.create_train_state(self.rng, opt_eta, self.input_dim)
@@ -316,8 +318,8 @@ class OTFlowMatching:
     def _get_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str, tau_a: float, tau_b: float) -> Callable:
         @jax.jit
         def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, tau_a: float, tau_b: float, epsilon: float, cost_fn: str, scale_cost: Any, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
-            geom = ott.geometry.pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost, cost_fn=cost_fn)
-            out = solver(ott.problems.linear.linear_problem.LinearProblem(geom), tau_a=tau_a, tau_b=tau_b)
+            geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost, cost_fn=cost_fn)
+            out = solver(linear_problem.LinearProblem(geom), tau_a=tau_a, tau_b=tau_b)
             inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
             
             return x[inds_source], y[inds_target], out.sum(axis=0), out.sum(axis=1)
@@ -358,7 +360,7 @@ class OTFlowMatching:
             X: jnp.ndarray, Y: jnp.ndarray, len_x: int, k: int = 30  # type: ignore[name-defined]
         ) -> Tuple[jnp.ndarray, jnp.ndarray]:  # type: ignore[name-defined]
             concat = jnp.concatenate((X,Y), axis=0)
-            pairwise_euclidean_distances = ott.geometry.pointcloud.PointCloud(concat, concat).cost_matrix
+            pairwise_euclidean_distances = pointcloud.PointCloud(concat, concat).cost_matrix
             distances, indices = jax.lax.approx_min_k(pairwise_euclidean_distances, k=k, recall_target=0.95, aggregate_to_topk=True)
             return distances, indices
 
@@ -366,21 +368,21 @@ class OTFlowMatching:
             distances, indices = get_nearest_neighbors(X, Y, len(X), k_neighbors)
             a = jnp.zeros((len(X)+ len(Y), len(X)+ len(Y)))
             adj_matrix = a.at[jnp.repeat(jnp.arange(len(X)+len(Y)), repeats=k_neighbors).flatten(), indices.flatten()].set(distances.flatten())
-            return ott.geometry.graph.Graph.from_graph(adj_matrix, normalize=True).cost_matrix
+            return graph.Graph.from_graph(adj_matrix, normalize=True).cost_matrix
         
         def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, k_neighbors: int, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array, jnp.ndarray, jnp.ndarray]:
             cm = create_cost_matrix(x, y, k_neighbors)
-            geom = ott.geometry.geometry.Geometry(cost_matrix=cm, epsilon=epsilon, scale_cost=scale_cost)
-            out = solver(ott.problems.linear.linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
+            geom = geometry.Geometry(cost_matrix=cm, epsilon=epsilon, scale_cost=scale_cost)
+            out = solver(linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
             inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
             return x[inds_source], y[inds_target], out.sum(axis=0), out.sum(axis=1)
 
         return partial(match_pairs, solver=ot_solver, epsilon=epsilon, k_neighbors=k_neighbors, tau_a=tau_a, tau_b=tau_b, **kwargs)
 
-    def _get_match_latent_fn(self, ot_solver: Type[ott.solvers.linear.sinkhorn.Sinkhorn], epsilon: float) -> Callable:
+    def _get_match_latent_fn(self, ot_solver: Type[sinkhorn.Sinkhorn], epsilon: float) -> Callable:
         def match_latent_to_data(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float) -> Tuple[jnp.array, jnp.array]:
-            geom = ott.geometry.pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost="mean")
-            out = solver(ott.problems.linear.linear_problem.LinearProblem(geom))
+            geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost="mean")
+            out = solver(linear_problem.LinearProblem(geom))
             inds_source = jax.vmap(
                 lambda tmap: jax.random.categorical(key, logits=jnp.log(tmap), shape=(1,))
             )(out.matrix)
@@ -459,16 +461,15 @@ class OTFlowMatching:
 
         return step_fn
 
-    def transport(self, x: jnp.array, samples_per_x: int = 1, seed: int = 0, diffeqsolve_kwargs: Dict[str, Any] = types.MappingProxyType({})) -> Union[jnp.array, diffrax.Solution]:
+    def transport(self, source: jnp.array, seed: int = 0, diffeqsolve_kwargs: Dict[str, Any] = types.MappingProxyType({})) -> Union[jnp.array, diffrax.Solution]:
         diffeqsolve_kwargs = dict(diffeqsolve_kwargs)
         rng = jax.random.PRNGKey(seed)
-        source_batch = x  # jnp.tile(x, (samples_per_x, *((1,) * (x.ndim-1))))
-        latent_shape = (len(x),)
+        latent_shape = (len(source),)
         latent_batch = self.noise_fn(rng, shape=latent_shape) * self.noise_std
 
         apply_fn_partial = partial(
-            self.state_neural_net.apply_fn, condition=source_batch
-        )  # note that here we swap source and noise
+            self.state_neural_net.apply_fn, condition=source
+        ) 
         solution = diffrax.diffeqsolve(
             diffrax.ODETerm(lambda t, y, args: apply_fn_partial({"params": self.state_neural_net.params}, t=t, latent=y)),
             diffeqsolve_kwargs.pop("solver", diffrax.Tsit5()),
@@ -477,10 +478,9 @@ class OTFlowMatching:
             dt0=diffeqsolve_kwargs.pop("dt0", None),
             y0=latent_batch,  
             stepsize_controller=diffeqsolve_kwargs.pop("stepsize_controller", diffrax.PIDController(rtol=1e-3, atol=1e-6)),
-            # saveat=diffrax.SaveAt(ts=ts),
+            **diffeqsolve_kwargs
         )
-        t_xz = solution.ys
-        return jnp.reshape(t_xz, (samples_per_x, *(x.shape))), solution
+        return solution.ys, solution
 
 
 class OriginalFlowMatching:
@@ -523,9 +523,9 @@ class OriginalFlowMatching:
         
         @jax.jit
         def match_pairs(x: jnp.ndarray, y: jnp.ndarray) -> Tuple[jnp.array, jnp.array]:
-            geom = ott.geometry.pointcloud.PointCloud(x, y, epsilon=1e-1, scale_cost="mean")
-            out = ott.solvers.linear.sinkhorn.Sinkhorn(threshold=1e-2)(
-                ott.problems.linear.linear_problem.LinearProblem(geom)
+            geom = pointcloud.PointCloud(x, y, epsilon=1e-1, scale_cost="mean")
+            out = sinkhorn.Sinkhorn(threshold=1e-2)(
+                linear_problem.LinearProblem(geom)
             )
             pi_star_inds = jax.random.categorical(
                 jax.random.PRNGKey(0), logits=jnp.log(out.matrix.flatten()), shape=(len(x),)
