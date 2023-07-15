@@ -203,6 +203,7 @@ class OTFlowMatching:
         epsilon: float = 1e-2,
         eps_match_latent_fn: float = 1e-2,
         cost_fn: Union[costs.CostFn, Literal["graph"]] = costs.SqEuclidean(),
+        graph_kwargs: Dict[str, Any] = types.MappingProxyType({}),
         mlp_eta: Callable[[jnp.ndarray], float] = None,
         mlp_xi: Callable[[jnp.ndarray], float] = None,
         tau_a: float = 1.0,
@@ -235,6 +236,7 @@ class OTFlowMatching:
         self.ot_solver = ot_solver
         self.epsilon = epsilon
         self.cost_fn = cost_fn
+        self.graph_kwargs = graph_kwargs # "k_neighbors", kwargs for graph.Graph.from_graph()
 
         # OT latent-data matching parameters
         self.solver_latent_to_data = sinkhorn.Sinkhorn() if solver_latent_to_data is None else solver_latent_to_data
@@ -247,7 +249,7 @@ class OTFlowMatching:
         self.state_xi: Optional[TrainState] = None
         self.tau_a: float = tau_a
         self.tau_b: float = tau_b
-        self.unbalanced_kwargs = unbalanced_kwargs # e.g. "opt_eta", "opt_xi"
+        self.unbalanced_kwargs = unbalanced_kwargs # "opt_eta", "opt_xi"
 
         # callback parameteres
         self.callback = callback
@@ -261,10 +263,10 @@ class OTFlowMatching:
 
         self.step_fn = self._get_step_fn()
         if self.cost_fn == "graph":
-            self.match_fn = self._get_match_fn_graph(self.ot_solver, epsilon=self.epsilon,  k_neighbors=kwargs.pop("k_neighbors", 30))
+            self.match_fn = self._get_match_fn_graph(self.ot_solver, epsilon=self.epsilon, tau_a=self.tau_a, tau_b=self.tau_b, **self.graph_kwargs)
         else:
             if isinstance(self.ot_solver, sinkhorn.Sinkhorn):
-                self.match_fn = self._get_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b)
+                self.match_fn = self._get_sinkhorn_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b )
             else:
                 self.match_fn = self._get_gromov_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn)
 
@@ -315,7 +317,7 @@ class OTFlowMatching:
                     **self.unbalanced_kwargs,
                 )
 
-    def _get_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str, tau_a: float, tau_b: float) -> Callable:
+    def _get_sinkhorn_match_fn (self, ot_solver: Any, epsilon: float, cost_fn: str, tau_a: float, tau_b: float) -> Callable:
         @jax.jit
         def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, tau_a: float, tau_b: float, epsilon: float, cost_fn: str, scale_cost: Any, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
             geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost, cost_fn=cost_fn)
@@ -326,34 +328,22 @@ class OTFlowMatching:
 
         return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b)
 
-    def _get_fused_gromov_match_fn(self, ot_solver: Any, cost_fn: str, tau_a: float, tau_b: float, epsilon: float, scale_cost: Any) -> Callable:
+    def _get_gromov_match_fn(self, ot_solver: Any, cost_fn: str, tau_a: float, tau_b: float, epsilon: float, scale_cost: Any, split_dim: int, fused_penalty: float) -> Callable:
         @jax.jit
-        def match_pairs(key: jax.random.PRNGKeyArray, x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], solver: Any, epsilon: float, cost_fn: str, scale_cost, fused_penalty, n_samples: Optional[int] = None) -> Tuple[jnp.array, jnp.array]:
-            geom_xx = pointcloud.PointCloud(x=x[0], y=x[0], cost_fn=cost_fn, scale_cost=scale_cost)
-            geom_yy = pointcloud.PointCloud(x=y[0], y=y[0], cost_fn=cost_fn, scale_cost=scale_cost)
-            geom_xy = pointcloud.PointCloud(x=x[1], y=y[1], cost_fn=cost_fn, scale_cost=scale_cost)
+        def match_pairs(key: jax.random.PRNGKeyArray, x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], solver: Any, epsilon: float, cost_fn: str, scale_cost, fused_penalty: float, split_dim: int = 0, n_samples: Optional[int] = None) -> Tuple[jnp.array, jnp.array]:
+            geom_xx = pointcloud.PointCloud(x=x[split_dim:], y=x[split_dim:], cost_fn=cost_fn, scale_cost=scale_cost)
+            geom_yy = pointcloud.PointCloud(x=y[split_dim:], y=y[split_dim:], cost_fn=cost_fn, scale_cost=scale_cost)
+            if split_dim > 0:
+                geom_xy = pointcloud.PointCloud(x=x[:split_dim], y=y[:split_dim], cost_fn=cost_fn, scale_cost=scale_cost)
+            else:
+                geom_xy = None
             prob = quadratic_problem.QuadraticProblem(geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty, tau_a=tau_a, tau_b=tau_b, epsilon=epsilon)
             out = solver(prob)
             inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
             return x[inds_source], y[inds_target], out.sum(axis=0), out.sum(axis=1)
 
-        return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost)
-       
-
-    def _get_gromov_match_fn(self, ot_solver: Any, cost_fn: str, tau_a: float, tau_b: float, epsilon: float, scale_cost: Any) -> Callable:
-        @jax.jit
-        def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, cost_fn: str, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
-            geom_xx = pointcloud.PointCloud(x=x, y=x, cost_fn=cost_fn, scale_cost=scale_cost)
-            geom_yy = pointcloud.PointCloud(x=y, y=y, cost_fn=cost_fn, scale_cost=scale_cost)
-            prob = quadratic_problem.QuadraticProblem(geom_xx, geom_yy, epsilon=epsilon)
-            out = solver(prob)
-            
-            inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
-            
-            return x[inds_source], y[inds_target], out.sum(axis=0), out.sum(axis=1)
-
-        return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, epsilon=epsilon, scale_cost=scale_cost)
-        
+        return partial(match_pairs, solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost, split_dim=split_dim)
+           
     def _get_match_fn_graph(self, ot_solver: Any, epsilon: float, k_neighbors: int, tau_a: float, tau_b: float, scale_cost: Any, **kwargs) -> Callable:
 
         def get_nearest_neighbors(
@@ -364,14 +354,14 @@ class OTFlowMatching:
             distances, indices = jax.lax.approx_min_k(pairwise_euclidean_distances, k=k, recall_target=0.95, aggregate_to_topk=True)
             return distances, indices
 
-        def create_cost_matrix(X: jnp.array, Y: jnp.array, k_neighbors: int) -> jnp.array:
+        def create_cost_matrix(X: jnp.array, Y: jnp.array, k_neighbors: int, **kwargs: Any) -> jnp.array:
             distances, indices = get_nearest_neighbors(X, Y, len(X), k_neighbors)
             a = jnp.zeros((len(X)+ len(Y), len(X)+ len(Y)))
             adj_matrix = a.at[jnp.repeat(jnp.arange(len(X)+len(Y)), repeats=k_neighbors).flatten(), indices.flatten()].set(distances.flatten())
-            return graph.Graph.from_graph(adj_matrix, normalize=True).cost_matrix
+            return graph.Graph.from_graph(adj_matrix, normalize=kwargs.pop("normalize", True), **kwargs).cost_matrix
         
-        def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, k_neighbors: int, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array, jnp.ndarray, jnp.ndarray]:
-            cm = create_cost_matrix(x, y, k_neighbors)
+        def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, solver: Any, epsilon: float, k_neighbors: int, n_samples: Optional[int], **kwargs) -> Tuple[jnp.array, jnp.array, jnp.ndarray, jnp.ndarray]:
+            cm = create_cost_matrix(x, y, k_neighbors, **kwargs)
             geom = geometry.Geometry(cost_matrix=cm, epsilon=epsilon, scale_cost=scale_cost)
             out = solver(linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
             inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
@@ -455,7 +445,6 @@ class OTFlowMatching:
                 metrics["loss_xi"] = loss_b
             else:
                 new_state_xi = xi_predictions = None
-
 
             return metrics, state_neural_net.apply_gradients(grads=grads_mlp), new_state_eta, new_state_xi, eta_predictions, xi_predictions
 
