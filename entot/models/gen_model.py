@@ -395,9 +395,11 @@ class OTFlowMatching:
             return (1 - t) * x_0 + t * x_1
 
         def loss_fn(params_mlp: jnp.array, apply_fn_mlp: Callable, batch: Dict[str, jnp.array]):
-            psi_t_eval = straight_path(batch["noise"], batch["target"], batch["time"])
-            mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], latent=psi_t_eval, condition=batch["source"])
-            d_psi = batch["target"] - batch["noise"]
+            _, mu_0 = apply_fn_mlp({"params": params_mlp}, t=0.0, latent=batch["noise"], condition=batch["source"]) # note that batch["noise"] not used here
+            d_psi = batch["target"] - mu_0
+            psi_t_eval = straight_path(mu_0, batch["target"], batch["time"])
+            mlp_pred, _ = apply_fn_mlp({"params": params_mlp}, t=batch["time"], latent=psi_t_eval, condition=batch["source"])
+            d_psi = batch["target"] - mu_0
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
             return jnp.mean(optax.l2_loss(mlp_pred, d_psi))
@@ -467,9 +469,10 @@ class OTFlowMatching:
 
         apply_fn_partial = partial(
             self.state_neural_net.apply_fn, condition=source
-        ) 
+        )
+        apply_fn_partial2 = lambda *args, **kwargs: apply_fn_partial(*args, **kwargs)[0]
         solution = diffrax.diffeqsolve(
-            diffrax.ODETerm(lambda t, y, args: apply_fn_partial({"params": self.state_neural_net.params}, t=t, latent=y)),
+            diffrax.ODETerm(lambda t, y, args: apply_fn_partial2({"params": self.state_neural_net.params}, t=t, latent=y)),
             diffeqsolve_kwargs.pop("solver", diffrax.Tsit5()),
             t0=0,
             t1=1,
@@ -627,27 +630,29 @@ class MLP_FM_VAE(ModelBase):
         freq = 2 * jnp.arange(self.n_frequencies) * jnp.pi
         t = freq * t  # [..., None]
         return jnp.concatenate((jnp.cos(t), jnp.sin(t)), axis=-1)
+    
 
     @nn.compact
-    def __call__(self, t: float, condition: jnp.ndarray, latent: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
+    def __call__(self, t: float, condition: jnp.ndarray, latent: jnp.ndarray, return_condition: bool = False) -> Tuple[jnp.ndarray, jnp.ndarray]:  # noqa: D102
         
-        t = jnp.full(shape=(len(condition), 1), fill_value=t)
+        embedded_condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
+
+        t = jnp.full(shape=(len(embedded_condition), 1), fill_value=t)
         t = self.time_encoder(t)
         t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
         
-        condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
-        #latent = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(latent)
-        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(jnp.concatenate((condition, t), axis=-1))
+        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(jnp.concatenate((embedded_condition, t), axis=-1))
 
-        condition = condition + latent * variance
+        embedded_condition_noisy = embedded_condition + latent * variance
 
-        z = jnp.concatenate((condition, t), axis=-1)
+        z = jnp.concatenate((embedded_condition_noisy, t), axis=-1)
         z = Block(num_layers=3, dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
 
         Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
         z = Wx(z)
 
-        return z
+        return z, embedded_condition
+        
 
 
     def create_train_state(
