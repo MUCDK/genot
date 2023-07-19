@@ -401,6 +401,8 @@ class OTFlowMatching:
             return (sig_0 - (1 - sig_min) * t) * x_0 + t * x_1
 
         def loss_fn(params_mlp: jnp.array, params_bridge_net: jnp.array, apply_fn_mlp: Callable, apply_fn_bridge: Callable, batch: Dict[str, jnp.array], rng_latent_match):
+            assert False
+            TODO: check and adapt shapes
             mu_0, sigma_0 = apply_fn_bridge({"params": params_bridge_net}, condition=batch["source"])
             mu_noisy = mu_0 + batch["noise"] * sigma_0 # todo: match latent to target with OT
             #noise_batch = self.match_latent_fn(rng_latent_match, batch["noise"], batch["target"])
