@@ -325,7 +325,6 @@ class OTFlowMatching:
                 )
 
     def _get_sinkhorn_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str, tau_a: float, tau_b: float, scale_cost: Any, n_samples: Optional[int]=None) -> Callable:
-        #@jax.jit
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "n_samples"])
         def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, ot_solver: Any, tau_a: float, tau_b: float, epsilon: float, cost_fn: str, scale_cost: Any, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
             geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost, cost_fn=cost_fn)
@@ -395,11 +394,11 @@ class OTFlowMatching:
             return (1 - t) * x_0 + t * x_1
 
         def loss_fn(params_mlp: jnp.array, apply_fn_mlp: Callable, batch: Dict[str, jnp.array]):
-            _, mu_0 = apply_fn_mlp({"params": params_mlp}, t=0.0, latent=batch["noise"], condition=batch["source"]) # note that batch["noise"] not used here
-            d_psi = batch["target"] - mu_0
-            psi_t_eval = straight_path(mu_0, batch["target"], batch["time"])
-            mlp_pred, _ = apply_fn_mlp({"params": params_mlp}, t=batch["time"], latent=psi_t_eval, condition=batch["source"])
-            d_psi = batch["target"] - mu_0
+            _, mu_0, sigma_0 = apply_fn_mlp({"params": params_mlp}, t=0.0, latent=batch["noise"], flow=jnp.zeros_like(batch["noise"]), condition=batch["source"]) # note that batch["noise"] not used here
+            d_psi = batch["target"] - (mu_0 + batch["noise"] * sigma_0)
+            psi_t_eval = straight_path(mu_0 + batch["noise"] * sigma_0, batch["target"], batch["time"])
+            mlp_pred, _, _ = apply_fn_mlp({"params": params_mlp}, t=batch["time"], latent=batch["noise"], flow=psi_t_eval, condition=batch["source"])
+            #d_psi = batch["target"] - mu_0
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
             return jnp.mean(optax.l2_loss(mlp_pred, d_psi))
@@ -471,13 +470,15 @@ class OTFlowMatching:
             self.state_neural_net.apply_fn, condition=source
         )
         apply_fn_partial2 = lambda *args, **kwargs: apply_fn_partial(*args, **kwargs)[0]
+        _, mu_0, sig_0 = self.state_neural_net.apply_fn({"params": self.state_neural_net.params}, condition=source, t=0, latent=latent_batch)
+        y0 = mu_0 + latent_batch * sig_0
         solution = diffrax.diffeqsolve(
             diffrax.ODETerm(lambda t, y, args: apply_fn_partial2({"params": self.state_neural_net.params}, t=t, latent=y)),
             diffeqsolve_kwargs.pop("solver", diffrax.Tsit5()),
             t0=0,
             t1=1,
             dt0=diffeqsolve_kwargs.pop("dt0", None),
-            y0=latent_batch,  
+            y0=y0,#latent_batch,  
             stepsize_controller=diffeqsolve_kwargs.pop("stepsize_controller", diffrax.PIDController(rtol=1e-3, atol=1e-6)),
             **diffeqsolve_kwargs
         )
@@ -623,6 +624,7 @@ class MLP_FM_VAE(ModelBase):
     joint_hidden_dim: int
     is_potential: bool = False
     act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
+    act_fn_var: Callable[[jnp.ndarray], jnp.ndarray] = nn.relu
     latent_dim: int = 0
     n_frequencies: int = 1
 
@@ -633,7 +635,7 @@ class MLP_FM_VAE(ModelBase):
     
 
     @nn.compact
-    def __call__(self, t: float, condition: jnp.ndarray, latent: jnp.ndarray, return_condition: bool = False) -> Tuple[jnp.ndarray, jnp.ndarray]:  # noqa: D102
+    def __call__(self, t: float, condition: jnp.ndarray, flow: jnp.ndarray, latent: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:  # noqa: D102
         
         embedded_condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
 
@@ -641,24 +643,24 @@ class MLP_FM_VAE(ModelBase):
         t = self.time_encoder(t)
         t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
         
-        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(jnp.concatenate((embedded_condition, t), axis=-1))
+        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn_var)(jnp.concatenate((embedded_condition, t), axis=-1))
 
         embedded_condition_noisy = embedded_condition + latent * variance
 
-        z = jnp.concatenate((embedded_condition_noisy, t), axis=-1)
+        z = jnp.concatenate((flow, t), axis=-1)
         z = Block(num_layers=3, dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
 
         Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
         z = Wx(z)
 
-        return z, embedded_condition
+        return z, embedded_condition, variance
         
 
 
     def create_train_state(
         self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, source_dim: int, latent_dim: int, **kwargs: Any
     ) -> NeuralTrainState:
-        params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,source_dim)), jnp.ones((1,latent_dim)))["params"]
+        params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,source_dim)), jnp.ones((1,latent_dim)), jnp.ones((1,latent_dim)))["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
 class MLP_FM_VAE_all_dims(ModelBase):
