@@ -311,9 +311,8 @@ class OTFlowMatching:
             x_batch, target_batch = tfds.as_numpy(next(x_loader)), tfds.as_numpy(next(y_loader))
             self.rng, rng_time, rng_noise, rng_step_fn = jax.random.split(self.rng, 4)
             source_batch = jnp.tile(x_batch, (self.k_noise_per_x, *((1,) * (x_batch.ndim - 1))))
-            noise_shape = (len(x_batch),)
-            batch["noise"] = self.noise_fn(rng_noise, shape=noise_shape) * self.noise_std
-            batch["time"] = jax.random.uniform(rng_time, (len(source_batch), 1))
+            batch["noise"] = self.noise_fn(rng_noise, shape=(self.n_samples,)) * self.noise_std
+            batch["time"] = jax.random.uniform(rng_time, (1,))
             batch["source"] = source_batch
             batch["target"] = target_batch        
             metrics, self.state_neural_net, self.state_bridge_net, self.state_eta, self.state_xi, eta_predictions, xi_predictions = self.step_fn(rng_step_fn, self.state_neural_net, self.state_bridge_net, batch, self.state_eta, self.state_xi)
@@ -401,14 +400,16 @@ class OTFlowMatching:
             return (sig_0 - (1 - sig_min) * t) * x_0 + t * x_1
 
         def loss_fn(params_mlp: jnp.array, params_bridge_net: jnp.array, apply_fn_mlp: Callable, apply_fn_bridge: Callable, batch: Dict[str, jnp.array], rng_latent_match):
-            assert False
-            TODO: check and adapt shapes
             mu_0, sigma_0 = apply_fn_bridge({"params": params_bridge_net}, condition=batch["source"])
             mu_noisy = mu_0 + batch["noise"] * sigma_0 # todo: match latent to target with OT
             #noise_batch = self.match_latent_fn(rng_latent_match, batch["noise"], batch["target"])
             #batch["noise"] = noise_batch
+            #jax.debug.print("shape {x}", x=mu_0.shape)
+            #jax.debug.print("shape {x}", x=mu_noisy.shape)
+            #jax.debug.print("shape {x}", x=sigma_0.shape)
+            #jax.debug.print("shape {x}", x=batch["noise"].shape)
             psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 0.001, sigma_0)
-            mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], x=psi_t_eval)
+            mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], x=psi_t_eval, condition=batch["source"])
             d_psi = batch["target"] - mu_noisy
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
@@ -479,8 +480,11 @@ class OTFlowMatching:
         mu_0, sigma_0 = self.state_bridge_net.apply_fn({"params": self.state_bridge_net.params}, condition=source)
 
         mu_noisy = mu_0 + latent_batch * sigma_0 
+        apply_fn_partial = partial(
+            self.state_neural_net.apply_fn, condition=source
+        )
         solution = diffrax.diffeqsolve(
-            diffrax.ODETerm(lambda t, y, args: self.state_neural_net.apply_fn({"params": self.state_neural_net.params}, t=t, x=y)),
+            diffrax.ODETerm(lambda t, y, *args: apply_fn_partial({"params": self.state_neural_net.params}, t=t, x=y)),
             diffeqsolve_kwargs.pop("solver", diffrax.Tsit5()),
             t0=0,
             t1=1,
@@ -596,7 +600,7 @@ class MLP_no_noise(ModelBase):
         return jnp.concatenate((jnp.cos(t), jnp.sin(t)), axis=-1)
 
     @nn.compact
-    def __call__(self, t: float, x: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
+    def __call__(self, t: float, x: jnp.ndarray, condition: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
         t = jnp.full(shape=(len(x), 1), fill_value=t)
         t = self.time_encoder(t)
         Wt = nn.Dense(self.dim_hidden[0], use_bias=True)
@@ -605,7 +609,10 @@ class MLP_no_noise(ModelBase):
         Wc = nn.Dense(self.dim_hidden[0], use_bias=True)
         x = self.act_fn(Wc(x))
 
-        z = jnp.concatenate((x, t), axis=-1)
+        Wc2 = nn.Dense(self.dim_hidden[0], use_bias=True)
+        x = self.act_fn(Wc2(condition))
+
+        z = jnp.concatenate((x, condition, t), axis=-1)
 
         for n_hidden in self.dim_hidden:
             Wx = nn.Dense(n_hidden, use_bias=True)
@@ -619,7 +626,7 @@ class MLP_no_noise(ModelBase):
     def create_train_state(
         self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, source_dim: int, latent_dim: int, **kwargs: Any
     ) -> NeuralTrainState:
-        params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,source_dim)))["params"]
+        params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,source_dim)), jnp.ones((1,source_dim)))["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
 
