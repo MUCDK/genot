@@ -48,6 +48,10 @@ def sample_indices_from_tmap(key: jax.random.PRNGKeyArray, tmat: jnp.ndarray, n_
                 key, logits=jnp.log(tmat.flatten()), shape=(n_samples,)
             )
     return pi_star_inds // tmat.shape[1], pi_star_inds % tmat.shape[1]
+
+def sample_conditional_indices_from_tmap(key: jax.random.PRNGKeyArray, tmat: jnp.ndarray, k_samples_per_x: Optional[int]) -> Tuple[jnp.array, jnp.array]:
+    indices_per_row = jax.vmap(lambda tmat: jax.random.choice(key=key, a=jnp.arange(len(tmat)), p=tmat, shape=(k_samples_per_x,)), in_axes=0, out_axes=0)(tmat)
+    return jnp.repeat(jnp.arange(tmat.shape[0]), k_samples_per_x), jnp.reshape(indices_per_row, k_samples_per_x*len(indices_per_row)) % tmat.shape[1]
     
 class MLP_FM(ModelBase):
     output_dim: int
@@ -308,11 +312,11 @@ class OTFlowMatching:
 
         batch: Dict[str, jnp.array] = {}
         for step in tqdm(range(self.iterations)):
-            x_batch, target_batch = tfds.as_numpy(next(x_loader)), tfds.as_numpy(next(y_loader))
+            source_batch, target_batch = tfds.as_numpy(next(x_loader)), tfds.as_numpy(next(y_loader))
             self.rng, rng_time, rng_noise, rng_step_fn = jax.random.split(self.rng, 4)
-            source_batch = jnp.tile(x_batch, (self.k_noise_per_x, *((1,) * (x_batch.ndim - 1))))
             batch["noise"] = self.noise_fn(rng_noise, shape=(self.n_samples,)) * self.noise_std
-            batch["time"] = jax.random.uniform(rng_time, (1,))
+            #batch["time"] = jax.random.uniform(rng_time, (1,))
+            batch["time"] = jax.random.uniform(rng_time, (self.n_samples, 1))
             batch["source"] = source_batch
             batch["target"] = target_batch        
             metrics, self.state_neural_net, self.state_bridge_net, self.state_eta, self.state_xi, eta_predictions, xi_predictions = self.step_fn(rng_step_fn, self.state_neural_net, self.state_bridge_net, batch, self.state_eta, self.state_xi)
@@ -334,7 +338,8 @@ class OTFlowMatching:
         def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, ot_solver: Any, tau_a: float, tau_b: float, epsilon: float, cost_fn: str, scale_cost: Any, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
             geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost, cost_fn=cost_fn)
             out = ot_solver(linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
-            inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
+            #inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
+            inds_source, inds_target = sample_conditional_indices_from_tmap(key=key, tmat=out.matrix, k_samples_per_x=10)
             
             return x[inds_source], y[inds_target], out.matrix.sum(axis=0), out.matrix.sum(axis=1)
 
@@ -342,7 +347,7 @@ class OTFlowMatching:
 
     def _get_gromov_match_fn(self, ot_solver: Any, cost_fn: str, tau_a: float, tau_b: float, epsilon: float, scale_cost: Any, split_dim: int, fused_penalty: float, n_samples: int) -> Callable:
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "fused_penalty", "split_dim", "tau_a", "tau_b", "n_samples"])
-        def match_pairs(key: jax.random.PRNGKeyArray, x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], ot_solver: Any, epsilon: float, tau_a: float, tau_b: float, cost_fn: str, scale_cost, fused_penalty: float, split_dim: int = 0, n_samples: Optional[int] = None) -> Tuple[jnp.array, jnp.array]:
+        def match_pairs(key: jax.random.PRNGKeyArray, x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], ot_solver: Any, epsilon: float, tau_a: float, tau_b: float, cost_fn: str, scale_cost, fused_penalty: float, n_samples: int, split_dim: int = 0) -> Tuple[jnp.array, jnp.array]:
             geom_xx = pointcloud.PointCloud(x=x[..., split_dim:], y=x[..., split_dim:], cost_fn=cost_fn, scale_cost=scale_cost)
             geom_yy = pointcloud.PointCloud(x=y[..., split_dim:], y=y[..., split_dim:], cost_fn=cost_fn, scale_cost=scale_cost)
             if split_dim > 0:
@@ -354,7 +359,7 @@ class OTFlowMatching:
             inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
             return x[inds_source], y[inds_target], out.matrix.sum(axis=0), out.matrix.sum(axis=1)
 
-        return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost, split_dim=split_dim, fused_penalty=fused_penalty)
+        return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost, split_dim=split_dim, fused_penalty=fused_penalty, n_samples=n_samples)
            
     def _get_match_fn_graph(self, ot_solver: Any, epsilon: float, k_neighbors: int, tau_a: float, tau_b: float, scale_cost: Any, **kwargs) -> Callable:
 
@@ -404,11 +409,7 @@ class OTFlowMatching:
             mu_noisy = mu_0 + batch["noise"] * sigma_0 # todo: match latent to target with OT
             #noise_batch = self.match_latent_fn(rng_latent_match, batch["noise"], batch["target"])
             #batch["noise"] = noise_batch
-            #jax.debug.print("shape {x}", x=mu_0.shape)
-            #jax.debug.print("shape {x}", x=mu_noisy.shape)
-            #jax.debug.print("shape {x}", x=sigma_0.shape)
-            #jax.debug.print("shape {x}", x=batch["noise"].shape)
-            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 0.001, sigma_0)
+            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 1.0, sigma_0)
             mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], x=psi_t_eval, condition=batch["source"])
             d_psi = batch["target"] - mu_noisy
             if len(mlp_pred.shape) == 1:
@@ -589,7 +590,8 @@ class OriginalFlowMatching:
 
 class MLP_no_noise(ModelBase):
     output_dim: int
-    dim_hidden: Sequence[int]
+    t_embed_dim: int
+    condition_embed_dim: int
     is_potential: bool = False
     act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
     n_frequencies: int = 1
@@ -601,24 +603,17 @@ class MLP_no_noise(ModelBase):
 
     @nn.compact
     def __call__(self, t: float, x: jnp.ndarray, condition: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
+
+        embedded_condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
         t = jnp.full(shape=(len(x), 1), fill_value=t)
+        #t = jnp.full(shape=(len(embedded_condition), 1), fill_value=t)
         t = self.time_encoder(t)
-        Wt = nn.Dense(self.dim_hidden[0], use_bias=True)
-        t = self.act_fn(Wt(t))
+        t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
+        
+        z = jnp.concatenate((x, embedded_condition, t), axis=-1)
 
-        Wc = nn.Dense(self.dim_hidden[0], use_bias=True)
-        x = self.act_fn(Wc(x))
-
-        Wc2 = nn.Dense(self.dim_hidden[0], use_bias=True)
-        x = self.act_fn(Wc2(condition))
-
-        z = jnp.concatenate((x, condition, t), axis=-1)
-
-        for n_hidden in self.dim_hidden:
-            Wx = nn.Dense(n_hidden, use_bias=True)
-            z = self.act_fn(Wx(z))
-
-        Wx = nn.Dense(self.output_dim, use_bias=True)
+        z = Block(dim=self.condition_embed_dim,out_dim=self.condition_embed_dim, activation_fn=self.act_fn)(z)
+        Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
         z = Wx(z)
 
         return z
