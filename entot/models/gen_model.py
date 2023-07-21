@@ -51,8 +51,15 @@ def sample_indices_from_tmap(key: jax.random.PRNGKeyArray, tmat: jnp.ndarray, n_
 
 def sample_conditional_indices_from_tmap(key: jax.random.PRNGKeyArray, tmat: jnp.ndarray, k_samples_per_x: Optional[int]) -> Tuple[jnp.array, jnp.array]:
     indices_per_row = jax.vmap(lambda tmat: jax.random.choice(key=key, a=jnp.arange(len(tmat)), p=tmat, shape=(k_samples_per_x,)), in_axes=0, out_axes=0)(tmat)
-    return jnp.repeat(jnp.arange(tmat.shape[0]), k_samples_per_x), jnp.reshape(indices_per_row, k_samples_per_x*len(indices_per_row)) % tmat.shape[1]
+    return jnp.repeat(jnp.arange(tmat.shape[0]), k_samples_per_x), indices_per_row % tmat.shape[1]
     
+def sinkhorn_fn(key, x, y):
+    ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn()
+    geom = pointcloud.PointCloud(x, y, epsilon=1e-2, scale_cost="mean")
+    out = ot_solver(linear_problem.LinearProblem(geom))
+    inds_source, inds_target = sample_conditional_indices_from_tmap(key, out.matrix, 1)
+    return x[inds_source], y[inds_target]
+
 class MLP_FM(ModelBase):
     output_dim: int
     dim_hidden: Sequence[int]
@@ -284,7 +291,7 @@ class OTFlowMatching:
             self.match_fn = self._get_match_fn_graph(self.ot_solver, epsilon=self.epsilon, tau_a=self.tau_a, tau_b=self.tau_b, **self.graph_kwargs)
         else:
             if isinstance(self.ot_solver, sinkhorn.Sinkhorn):
-                self.match_fn = self._get_sinkhorn_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b, scale_cost=self.scale_cost, n_samples=self.n_samples)
+                self.match_fn = self._get_sinkhorn_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b, scale_cost=self.scale_cost, k_samples_per_x=self.k_noise_per_x)
             else:
                 self.match_fn = self._get_gromov_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b, scale_cost=self.scale_cost, split_dim=self.split_dim, fused_penalty=self.fused_penalty, n_samples = self.n_samples)
 
@@ -314,11 +321,10 @@ class OTFlowMatching:
         for step in tqdm(range(self.iterations)):
             source_batch, target_batch = tfds.as_numpy(next(x_loader)), tfds.as_numpy(next(y_loader))
             self.rng, rng_time, rng_noise, rng_step_fn = jax.random.split(self.rng, 4)
-            batch["noise"] = self.noise_fn(rng_noise, shape=(self.n_samples,)) * self.noise_std
-            #batch["time"] = jax.random.uniform(rng_time, (1,))
-            batch["time"] = jax.random.uniform(rng_time, (self.n_samples, 1))
             batch["source"] = source_batch
-            batch["target"] = target_batch        
+            batch["target"] = target_batch
+            batch["time"] = jax.random.uniform(rng_time, (len(source_batch)*self.k_noise_per_x, 1))
+            batch["noise"] = self.noise_fn(rng_noise, shape=(len(source_batch), self.k_noise_per_x)) * self.noise_std
             metrics, self.state_neural_net, self.state_bridge_net, self.state_eta, self.state_xi, eta_predictions, xi_predictions = self.step_fn(rng_step_fn, self.state_neural_net, self.state_bridge_net, batch, self.state_eta, self.state_xi)
             for key, value in metrics.items():
                 self.metrics[key].append(value)
@@ -333,17 +339,15 @@ class OTFlowMatching:
                     **self.unbalanced_kwargs,
                 )
 
-    def _get_sinkhorn_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str, tau_a: float, tau_b: float, scale_cost: Any, n_samples: int) -> Callable:
-        @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "n_samples"])
-        def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, ot_solver: Any, tau_a: float, tau_b: float, epsilon: float, cost_fn: str, scale_cost: Any, n_samples: Optional[int]) -> Tuple[jnp.array, jnp.array]:
+    def _get_sinkhorn_match_fn(self, ot_solver: Any, epsilon: float, cost_fn: str, tau_a: float, tau_b: float, scale_cost: Any, k_samples_per_x: int) -> Callable:
+        @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x"])
+        def match_pairs(key: jax.random.PRNGKeyArray, x: jnp.ndarray, y: jnp.ndarray, ot_solver: Any, tau_a: float, tau_b: float, epsilon: float, cost_fn: str, scale_cost: Any, k_samples_per_x:int) -> Tuple[jnp.array, jnp.array]:
             geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost, cost_fn=cost_fn)
             out = ot_solver(linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
-            #inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
-            inds_source, inds_target = sample_conditional_indices_from_tmap(key=key, tmat=out.matrix, k_samples_per_x=10)
-            
+            inds_source, inds_target = sample_conditional_indices_from_tmap(key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x)
             return x[inds_source], y[inds_target], out.matrix.sum(axis=0), out.matrix.sum(axis=1)
 
-        return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost, n_samples=n_samples)
+        return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost, k_samples_per_x=k_samples_per_x)
 
     def _get_gromov_match_fn(self, ot_solver: Any, cost_fn: str, tau_a: float, tau_b: float, epsilon: float, scale_cost: Any, split_dim: int, fused_penalty: float, n_samples: int) -> Callable:
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "fused_penalty", "split_dim", "tau_a", "tau_b", "n_samples"])
@@ -409,7 +413,7 @@ class OTFlowMatching:
             mu_noisy = mu_0 + batch["noise"] * sigma_0 # todo: match latent to target with OT
             #noise_batch = self.match_latent_fn(rng_latent_match, batch["noise"], batch["target"])
             #batch["noise"] = noise_batch
-            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 1.0, sigma_0)
+            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 0.001, sigma_0)
             mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], x=psi_t_eval, condition=batch["source"])
             d_psi = batch["target"] - mu_noisy
             if len(mlp_pred.shape) == 1:
@@ -430,12 +434,14 @@ class OTFlowMatching:
 
         @jax.jit
         def step_fn(key: jax.random.PRNGKeyArray, state_neural_net: TrainState, state_bridge_net: TrainState, batch: Dict[str, jnp.array], state_eta: Optional[TrainState] = None, state_xi: Optional[TrainState] = None):
-            rng_match, rng_latent_match = jax.random.split(key, 2)
+            rng_match, rng_noise, rng_latent_match = jax.random.split(key, 3)
             source_batch, target_batch, a, b = self.match_fn(rng_match, batch["source"], batch["target"])
-            batch["source"] = source_batch
-            batch["target"] = target_batch
-            
-        
+            rng_noise = jax.random.split(rng_noise, (len(target_batch)))
+            noise_matched, conditional_target = jax.vmap(sinkhorn_fn, 0, 0)(rng_noise, batch["noise"], target_batch)
+
+            batch["source"] = jnp.reshape(source_batch, (len(source_batch), -1))
+            batch["target"] = jnp.reshape(conditional_target, (len(source_batch), -1))
+            batch["noise"] = jnp.reshape(noise_matched, (len(source_batch), -1))
 
             grad_fn = jax.value_and_grad(loss_fn, argnums=[0,1], has_aux=False)
             loss, (grads_mlp, grads_bridge_net) = grad_fn(state_neural_net.params, state_bridge_net.params, state_neural_net.apply_fn, state_bridge_net.apply_fn, batch, rng_latent_match)
@@ -525,11 +531,14 @@ class OriginalFlowMatching:
         for step in tqdm(range(self.iterations)):
 
             x_batch, y_batch = tfds.as_numpy(next(x_loader)), tfds.as_numpy(next(y_loader))
-            self.rng, rng_time = jax.random.split(self.rng, 2)
+            self.rng, rng_time, rng_noise = jax.random.split(self.rng, 3)
+            rng_noise = jax.random.split(rng_noise, len(x_batch))
             x_batch, y_batch = self.match_fn(x_batch, y_batch)
-            batch["source"] = x_batch
-            batch["target"] = y_batch
-            batch["time"] = jax.random.uniform(rng_time, (len(x_batch), 1))
+            noise_matched, conditional_target = jax.vmap(sinkhorn_fn, 0, 0)(rng_noise, y_batch.shape), y_batch, jnp.reshape(batch["noise"])
+            batch["source"] = x_batch.flatten()
+            batch["target"] = conditional_target.flatten()
+            batch["noise"] = noise_matched.flatten()
+            batch["time"] = jax.random.uniform(rng_time, (len(x_batch)*self.k_noise_per_x, 1))
             loss, self.state_neural_net = self.step_fn(self.state_neural_net, batch, self.sig_min)
             self.metrics["loss"].append(loss)
 
