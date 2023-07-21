@@ -413,7 +413,7 @@ class OTFlowMatching:
             mu_noisy = mu_0 + batch["noise"] * sigma_0 # todo: match latent to target with OT
             #noise_batch = self.match_latent_fn(rng_latent_match, batch["noise"], batch["target"])
             #batch["noise"] = noise_batch
-            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 0.001, sigma_0)
+            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 0.0001, sigma_0)
             mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], x=psi_t_eval, condition=batch["source"])
             d_psi = batch["target"] - mu_noisy
             if len(mlp_pred.shape) == 1:
@@ -790,4 +790,29 @@ class Bridge_MLP(ModelBase):
         self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, output_dim: int,
     ) -> NeuralTrainState:
         params = self.init(rng, jnp.ones((1,output_dim)))["params"]
+        return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
+
+
+class Bridge_MLP_with_t(ModelBase):
+    output_dim: int
+    t_embed_dim: int
+    condition_embed_dim: int
+    is_potential: bool = False
+    act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
+
+
+    @nn.compact
+    def __call__(self, t: jnp.ndarray, condition: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:  # noqa: D102
+        t = jnp.full(shape=(len(condition), 1), fill_value=t)
+        condition = Block(dim=self.condition_embed_dim, out_dim=self.condition_embed_dim, activation_fn=self.act_fn)(condition)
+        t = Block(dim=self.condition_embed_dim, out_dim=self.condition_embed_dim, activation_fn=self.act_fn)(t)
+        mu = Block(dim=self.condition_embed_dim, out_dim=self.output_dim)(jnp.concatenate((condition, t), axis=-1))
+        log_var = Block(dim=self.condition_embed_dim, out_dim=1)(jnp.concatenate((condition, t), axis=-1))
+        std = jnp.sqrt(jnp.exp(log_var))
+        return mu, std
+
+    def create_train_state(
+        self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, output_dim: int,
+    ) -> NeuralTrainState:
+        params = self.init(rng, jnp.ones((1,1)), jnp.ones((1,output_dim)))["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
