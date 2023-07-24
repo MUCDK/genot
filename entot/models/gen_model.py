@@ -293,7 +293,7 @@ class OTFlowMatching:
             if isinstance(self.ot_solver, sinkhorn.Sinkhorn):
                 self.match_fn = self._get_sinkhorn_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b, scale_cost=self.scale_cost, k_samples_per_x=self.k_noise_per_x)
             else:
-                self.match_fn = self._get_gromov_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b, scale_cost=self.scale_cost, split_dim=self.split_dim, fused_penalty=self.fused_penalty, n_samples = self.n_samples)
+                self.match_fn = self._get_gromov_match_fn(self.ot_solver, epsilon=self.epsilon, cost_fn=self.cost_fn, tau_a=self.tau_a, tau_b=self.tau_b, scale_cost=self.scale_cost, split_dim=self.split_dim, fused_penalty=self.fused_penalty, k_samples_per_x=self.k_noise_per_x)
 
         self.match_latent_fn = self._get_match_latent_fn(self.solver_latent_to_data, epsilon=self.epsilon_latent_to_data) if self.solver_latent_to_data is not None else lambda x, *_, **__: x
         if self.mlp_eta is not None:
@@ -349,9 +349,9 @@ class OTFlowMatching:
 
         return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost, k_samples_per_x=k_samples_per_x)
 
-    def _get_gromov_match_fn(self, ot_solver: Any, cost_fn: str, tau_a: float, tau_b: float, epsilon: float, scale_cost: Any, split_dim: int, fused_penalty: float, n_samples: int) -> Callable:
-        @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "fused_penalty", "split_dim", "tau_a", "tau_b", "n_samples"])
-        def match_pairs(key: jax.random.PRNGKeyArray, x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], ot_solver: Any, epsilon: float, tau_a: float, tau_b: float, cost_fn: str, scale_cost, fused_penalty: float, n_samples: int, split_dim: int = 0) -> Tuple[jnp.array, jnp.array]:
+    def _get_gromov_match_fn(self, ot_solver: Any, cost_fn: str, tau_a: float, tau_b: float, epsilon: float, scale_cost: Any, split_dim: int, fused_penalty: float, k_samples_per_x:int) -> Callable:
+        @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "fused_penalty", "split_dim", "tau_a", "tau_b", "k_samples_per_x"])
+        def match_pairs(key: jax.random.PRNGKeyArray, x: Tuple[jnp.ndarray, jnp.ndarray], y: Tuple[jnp.ndarray, jnp.ndarray], ot_solver: Any, epsilon: float, tau_a: float, tau_b: float, cost_fn: str, scale_cost, fused_penalty: float, k_samples_per_x: int, split_dim: int = 0) -> Tuple[jnp.array, jnp.array]:
             geom_xx = pointcloud.PointCloud(x=x[..., split_dim:], y=x[..., split_dim:], cost_fn=cost_fn, scale_cost=scale_cost)
             geom_yy = pointcloud.PointCloud(x=y[..., split_dim:], y=y[..., split_dim:], cost_fn=cost_fn, scale_cost=scale_cost)
             if split_dim > 0:
@@ -360,10 +360,10 @@ class OTFlowMatching:
                 geom_xy = None
             prob = quadratic_problem.QuadraticProblem(geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty, tau_a=tau_a, tau_b=tau_b)
             out = ot_solver(prob)
-            inds_source, inds_target = sample_indices_from_tmap(key=key, tmat=out.matrix, n_samples=n_samples)
+            inds_source, inds_target = sample_conditional_indices_from_tmap(key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x)
             return x[inds_source], y[inds_target], out.matrix.sum(axis=0), out.matrix.sum(axis=1)
 
-        return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost, split_dim=split_dim, fused_penalty=fused_penalty, n_samples=n_samples)
+        return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, epsilon=epsilon, cost_fn=cost_fn, tau_a=tau_a, tau_b=tau_b, scale_cost=scale_cost, split_dim=split_dim, fused_penalty=fused_penalty, k_samples_per_x=k_samples_per_x)
            
     def _get_match_fn_graph(self, ot_solver: Any, epsilon: float, k_neighbors: int, tau_a: float, tau_b: float, scale_cost: Any, **kwargs) -> Callable:
 
@@ -405,17 +405,23 @@ class OTFlowMatching:
 
     def _get_step_fn(self) -> Callable:
         
-        def psi_t(x_0, x_1, t,sig_min, sig_0):
-            return (sig_0 - (1 - sig_min) * t) * x_0 + t * x_1
-
+        
         def loss_fn(params_mlp: jnp.array, params_bridge_net: jnp.array, apply_fn_mlp: Callable, apply_fn_bridge: Callable, batch: Dict[str, jnp.array], rng_latent_match):
-            mu_0, sigma_0 = apply_fn_bridge({"params": params_bridge_net}, condition=batch["source"])
-            mu_noisy = mu_0 + batch["noise"] * sigma_0 # todo: match latent to target with OT
+            def psi_t(x_0, x_1, t):
+                return (1 -  t) * x_0 + t * x_1
+        
+    
+            mu_0, _ = apply_fn_bridge({"params": params_bridge_net}, condition=batch["source"])
+            mu_noisy = mu_0 + batch["noise"] * 1.0 # todo: match latent to target with OT
             #noise_batch = self.match_latent_fn(rng_latent_match, batch["noise"], batch["target"])
             #batch["noise"] = noise_batch
-            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 0.0001, sigma_0)
-            mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], x=psi_t_eval, condition=batch["source"])
+            #psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], 0.0001, sigma_0)
+            #mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], x=psi_t_eval, condition=batch["source"])
+            #d_psi = batch["target"] - mu_noisy
+            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"])
+            mlp_pred = apply_fn_mlp({"params": params_mlp}, t=batch["time"], latent=psi_t_eval, condition=batch["source"])
             d_psi = batch["target"] - mu_noisy
+        
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
             return jnp.mean(optax.l2_loss(mlp_pred, d_psi))
@@ -491,7 +497,7 @@ class OTFlowMatching:
             self.state_neural_net.apply_fn, condition=source
         )
         solution = diffrax.diffeqsolve(
-            diffrax.ODETerm(lambda t, y, *args: apply_fn_partial({"params": self.state_neural_net.params}, t=t, x=y)),
+            diffrax.ODETerm(lambda t, y, *args: apply_fn_partial({"params": self.state_neural_net.params}, t=t, latent=y)),
             diffeqsolve_kwargs.pop("solver", diffrax.Tsit5()),
             t0=0,
             t1=1,
@@ -748,12 +754,12 @@ class MLP_FM_VAE2(ModelBase):
         t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
         
         condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
-        #latent = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(latent)
-        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(condition)
+        latent = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(latent)
+        #variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(condition)
 
-        condition = condition + latent * variance
+        #condition = condition + latent * variance
 
-        z = jnp.concatenate((condition, t), axis=-1)
+        z = jnp.concatenate((condition, t, latent), axis=-1)
         z = Block(num_layers=3, dim=self.joint_hidden_dim, out_dim=self.joint_hidden_dim, activation_fn=self.act_fn)(z)
 
         Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
