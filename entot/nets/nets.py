@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Union, Callable
+from typing import Any, Callable, Tuple, Union
 
 import flax.linen as nn
 import jax
@@ -24,13 +24,14 @@ class GNOT_MLP(ModelBase):
 
     @nn.compact
     def __call__(self, t: float, condition: jnp.ndarray, latent: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
-        
         t = jnp.full(shape=(len(condition), 1), fill_value=t)
         t = self.time_encoder(t)
         t = Block(dim=self.t_embed_dim, out_dim=self.t_embed_dim, activation_fn=self.act_fn)(t)
-        
+
         condition = Block(dim=self.condition_embed_dim, out_dim=self.output_dim, activation_fn=self.act_fn)(condition)
-        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(jnp.concatenate((condition, t), axis=-1))
+        variance = Block(dim=self.condition_embed_dim, out_dim=1, activation_fn=self.act_fn)(
+            jnp.concatenate((condition, t), axis=-1)
+        )
 
         condition = condition + latent * variance
 
@@ -41,7 +42,6 @@ class GNOT_MLP(ModelBase):
         z = Wx(z)
 
         return z
-
 
 
 class Block(nn.Module):

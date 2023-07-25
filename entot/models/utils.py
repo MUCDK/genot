@@ -31,28 +31,33 @@ class DataLoader(BaseSampler):
 
 
 class MixtureNormalSampler(BaseSampler):
-    def __init__(self, centers: Iterable[int], dim: int, var: float = 1.0, batch_size: int = 64) -> None:
+    def __init__(self, rng: jax.random.KeyArray, centers: Iterable[int], dim: int, std: float = 1.0, batch_size: int = 64) -> None:
         super().__init__()
         self.batch_size = batch_size
         self.centers = jnp.array(centers)
         self.dim = dim
-        self.var = var
+        self.std = std
+        self.rng = rng
 
-    def __call__(self, key: jax.random.KeyArray) -> jnp.ndarray:
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> jnp.ndarray:
+        self.rng, rng = jax.random.split(self.rng, 2)
         if len(self.centers) > 1:
             comps_idx = jax.random.categorical(
-                key, jnp.repeat(jnp.log(1.0 / len(self.centers)), len(self.centers)), shape=(self.batch_size,)
+                rng, jnp.repeat(jnp.log(1.0 / len(self.centers)), len(self.centers)), shape=(self.batch_size,)
             ).astype(int)
         else:
             comps_idx = jnp.zeros(
                 self.batch_size,
             ).astype(int)
         if self.dim > 1:
-            std_normal = jax.random.normal(key, (self.batch_size, self.dim))
+            std_normal = jax.random.normal(rng, (self.batch_size, self.dim))
         else:
-            std_normal = jax.random.normal(key, (self.batch_size,))
+            std_normal = jax.random.normal(rng, (self.batch_size,))
         self.centers[comps_idx]
-        return jnp.reshape(std_normal * self.var + self.centers[comps_idx], (self.batch_size, self.dim))
+        return jnp.reshape(std_normal * self.std + self.centers[comps_idx], (self.batch_size, self.dim))
 
 
 def _concatenate(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
