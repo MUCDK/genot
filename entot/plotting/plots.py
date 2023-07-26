@@ -40,11 +40,11 @@ def plot_1D(source, target, t_xz, sinkhorn_output, **kwargs):
         edgecolor="black",
         alpha=0.95,
         ax=axes[0],
-        label=r"$x\sim\mathbb{P}$",
+        label=r"$x\sim\mu$",
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
     axes[0].legend(fontsize=12, loc="upper left", framealpha=1)
-    axes[0].set_title(r"Input $\mathbb{P}$", fontsize=14)
+    axes[0].set_title(r"Input $\mu$", fontsize=14)
 
     # Plotting learnt plan pi_hat between source and P_2#pi_hat(X,Z)
     joint_dist = jnp.concatenate((source, t_xz), axis=1)
@@ -96,10 +96,10 @@ def plot_1D(source, target, t_xz, sinkhorn_output, **kwargs):
         alpha=0.95,
         bw_adjust=kwargs.get("bw_adjust", 1.0),
         ax=axes[3],
-        label=r"$T(x,z)\sim T_{\sharp}(\mathbb{P}\times\mathbb{S})$",
+        label=r"$T(x,z)\sim T_{\sharp}(\mu\times\mathbb{S})$",
     )
     axes[3].legend(fontsize=12, loc="upper left", framealpha=1)
-    axes[3].set_title(r"Mapped $T_{\sharp}(\mathbb{P}\times\mathbb{S})$", fontsize=14)
+    axes[3].set_title(r"Mapped $T_{\sharp}(\mu\times\mathbb{S})$", fontsize=14)
 
     # Plotting target distribution
     sns.kdeplot(
@@ -109,11 +109,11 @@ def plot_1D(source, target, t_xz, sinkhorn_output, **kwargs):
         edgecolor="black",
         alpha=0.95,
         ax=axes[4],
-        label=r"$y\sim\mathbb{Q}$",
+        label=r"$y\sim\nu$",
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
     axes[4].legend(fontsize=12, loc="upper left", framealpha=1)
-    axes[4].set_title(r"Target $\mathbb{Q}$", fontsize=14)
+    axes[4].set_title(r"Target $\nu$", fontsize=14)
 
     fig.tight_layout(pad=0.01)
     fig.show()
@@ -197,7 +197,7 @@ def plot_1D_unbalanced(
         ax=axes[0][0],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[0][0].set_title(r"Input $\mathbb{P}$", fontsize=14)
+    axes[0][0].set_title(r"Input $\mu$", fontsize=14)
 
     # Plotting rescaled source distribution
     sns.kdeplot(
@@ -210,7 +210,7 @@ def plot_1D_unbalanced(
         ax=axes[0][1],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[0][1].set_title(r"$\eta(x) \cdot \mathbb{P}$", fontsize=14)
+    axes[0][1].set_title(r"$\eta(x) \cdot \mu$", fontsize=14)
 
     # Plotting learnt rescaled source distribution
     sns.kdeplot(
@@ -223,7 +223,7 @@ def plot_1D_unbalanced(
         ax=axes[0][2],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mathbb{P}$", fontsize=14)
+    axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mu$", fontsize=14)
 
     # Plotting P_2#pi_hat(X,Z)
     sns.kdeplot(
@@ -235,7 +235,7 @@ def plot_1D_unbalanced(
         bw_adjust=kwargs.get("bw_adjust", 1.0),
         ax=axes[0][3],
     )
-    axes[0][3].set_title(r"$T_{\theta}\#(\mathbb{P}\times\mathbb{S})$", fontsize=14)
+    axes[0][3].set_title(r"$T_{\theta}\#(\mu\times\mathbb{S})$", fontsize=14)
 
     # Plotting \eta(x) * P_2#pi_hat(X,Z)
     sns.kdeplot(
@@ -248,7 +248,7 @@ def plot_1D_unbalanced(
         bw_adjust=kwargs.get("bw_adjust", 1.0),
         ax=axes[0][4],
     )
-    axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot T_{\theta}\#(\mathbb{P}\times\mathbb{S})$", fontsize=14)
+    axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot T_{\theta}\#(\mu\times\mathbb{S})$", fontsize=14)
 
     # Plotting learnt plan pi_hat between learnt rescaled source and P_2#pi_hat(X,Z)
     joint_dist = jnp.concatenate((source, t_xz), axis=1)
@@ -302,7 +302,7 @@ def plot_1D_unbalanced(
         ax=axes[1][2],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[1][2].set_title(r"$\xi(y) \cdot \mathbb{Q}$", fontsize=14)
+    axes[1][2].set_title(r"$\xi(y) \cdot \nu$", fontsize=14)
 
     # Plotting rescaled learnt target distribution
     sns.kdeplot(
@@ -315,7 +315,7 @@ def plot_1D_unbalanced(
         ax=axes[1][3],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[1][3].set_title(r"$\hat{\xi}_{\theta}(y) \cdot \mathbb{Q}$", fontsize=14)
+    axes[1][3].set_title(r"$\hat{\xi}_{\theta}(y) \cdot \nu$", fontsize=14)
 
     # Plotting target distribution
     sns.kdeplot(
@@ -327,7 +327,7 @@ def plot_1D_unbalanced(
         ax=axes[1][4],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[1][4].set_title(r"$\mathbb{Q}$", fontsize=14)
+    axes[1][4].set_title(r"$\nu$", fontsize=14)
 
     fig.tight_layout(pad=0.01)
     fig.show()
@@ -382,19 +382,15 @@ def scatter_plot_2d(source, target, t_xz, sinkhorn_output, **_):
 
 
 def plot_1D_unbalanced_new(
-    source, target, target_predicted, eta_predictions, xi_predictions, epsilon, tau_a, tau_b, **kwargs
+    source, target, target_predicted, eta_predictions, xi_predictions, epsilon, tau_a, tau_b, seed, **kwargs
 ):
     with jax.default_device(jax.devices("cpu")[0]):
         fig, axes = plt.subplots(2, 5, figsize=(24, 16), dpi=150)
 
         geom = ott.geometry.pointcloud.PointCloud(source, target_predicted, epsilon=epsilon, scale_cost="mean")
-        #out_pred = ott.solvers.linear.sinkhorn.Sinkhorn()(
-        #    ott.problems.linear.linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b)
-        #)
         out_pred = ott.solvers.linear.sinkhorn.Sinkhorn()(
             ott.problems.linear.linear_problem.LinearProblem(geom)
         )
-        a_pred, b_pred = out_pred.matrix.sum(axis=1), out_pred.matrix.sum(axis=0)
         
         geom = ott.geometry.pointcloud.PointCloud(source, target, epsilon=epsilon, scale_cost="mean")
         out_true = ott.solvers.linear.sinkhorn.Sinkhorn()(
@@ -435,7 +431,8 @@ def plot_1D_unbalanced_new(
             ax=axes[0][0],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[0][0].set_title(r"$\mathbb{P}$", fontsize=14)
+        axes[0][0].set_title(r"$\mu$", fontsize=14)
+        axes[0][0].set_xlabel("Source")
 
         # Plotting rescaled source distribution
         sns.kdeplot(
@@ -448,7 +445,7 @@ def plot_1D_unbalanced_new(
             ax=axes[0][1],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[0][1].set_title(r"$\eta(x) \cdot \mathbb{P}$", fontsize=14)
+        axes[0][1].set_title(r"$\eta(x) \cdot \mu$", fontsize=14)
 
         # Plotting learnt rescaled source distribution
         sns.kdeplot(
@@ -461,7 +458,7 @@ def plot_1D_unbalanced_new(
             ax=axes[0][2],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mathbb{P}$", fontsize=14)
+        axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mu$", fontsize=14)
 
         # Plotting P_2#pi_hat(X,Y)
         sns.kdeplot(
@@ -473,7 +470,8 @@ def plot_1D_unbalanced_new(
             bw_adjust=kwargs.get("bw_adjust", 1.0),
             ax=axes[0][3],
         )
-        axes[0][3].set_title(r"$P_2#\pi_{\theta}$", fontsize=14)
+        axes[0][3].set_title(r"$P_2\#\pi_{\theta}$", fontsize=14)
+        axes[0][3].set_ylabel("Mapped Source")
 
         # Plotting \hat{\eta}(x) * P_2#pi_hat(X,Z)
         sns.kdeplot(
@@ -486,7 +484,7 @@ def plot_1D_unbalanced_new(
             bw_adjust=kwargs.get("bw_adjust", 1.0),
             ax=axes[0][4],
         )
-        axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot T_{\theta}\#\mathbb{P}$", fontsize=14)
+        axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot P_2\#\pi_{\theta}$", fontsize=14)
 
         # Plotting learnt plan pi_hat between learnt rescaled source and P_2#pi_hat(X,Z)
         joint_dist = jnp.concatenate((source, target_predicted), axis=1)
@@ -501,11 +499,11 @@ def plot_1D_unbalanced_new(
             ax=axes[1][0],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[1][0].set_title(r"$\hat{\pi}_{\theta}$", fontsize=14)
+        axes[1][0].set_title(r"$\hat{\pi}_{\theta}(\hat{\eta}_{\theta}\cdot \mu, \hat{\xi}_{\theta}\cdot \nu)$", fontsize=14)
 
         # Plotting ground truth plan between learnt rescaled source and P_2#pi_hat(X,Y)
         pi_star_inds = jax.random.categorical(
-            jax.random.PRNGKey(0), logits=jnp.log(out_pred.matrix.flatten()), shape=(len(source),)
+            jax.random.PRNGKey(seed), logits=jnp.log(out_pred.matrix.flatten()), shape=(len(source),)
         )
         inds_source = pi_star_inds // len(target)
         inds_target = pi_star_inds % len(target)
@@ -521,7 +519,8 @@ def plot_1D_unbalanced_new(
             ax=axes[1][1],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[1][1].set_title(r"$\pi^*$", fontsize=14)
+        axes[1][1].set_title(r"$\pi^*(\hat{\eta}_{\theta}\cdot \mu, \hat{\xi}_{\theta}\cdot \nu)$", fontsize=14)
+
 
         # Plotting rescaled target distribution
         df = pd.DataFrame(data=np.concatenate((target, b_true[:, None]), axis=1), columns=["target", "weights"])
@@ -536,7 +535,7 @@ def plot_1D_unbalanced_new(
             ax=axes[1][2],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[1][2].set_title(r"$\xi(y) \cdot \mathbb{Q}$", fontsize=14)
+        axes[1][2].set_title(r"$\xi(y) \cdot \nu$", fontsize=14)
 
         # Plotting rescaled learnt target distribution
         sns.kdeplot(
@@ -549,7 +548,7 @@ def plot_1D_unbalanced_new(
             ax=axes[1][3],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[1][3].set_title(r"$\hat{\xi}_{\theta}(y) \cdot \mathbb{Q}$", fontsize=14)
+        axes[1][3].set_title(r"$\hat{\xi}_{\theta}(y) \cdot \nu$", fontsize=14)
 
         # Plotting target distribution
         sns.kdeplot(
@@ -561,7 +560,7 @@ def plot_1D_unbalanced_new(
             ax=axes[1][4],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[1][4].set_title(r"$\mathbb{Q}$", fontsize=14)
+        axes[1][4].set_title(r"$\nu$", fontsize=14)
 
         fig.tight_layout(pad=0.01)
 
@@ -610,7 +609,7 @@ def plot_1D_unbalanced(
         ax=axes[0][0],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[0][0].set_title(r"Input $\mathbb{P}$", fontsize=14)
+    axes[0][0].set_title(r"Input $\mu$", fontsize=14)
 
     # Plotting rescaled source distribution
     sns.kdeplot(
@@ -623,7 +622,7 @@ def plot_1D_unbalanced(
         ax=axes[0][1],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[0][1].set_title(r"$\eta(x) \cdot \mathbb{P}$", fontsize=14)
+    axes[0][1].set_title(r"$\eta(x) \cdot \mu$", fontsize=14)
 
     # Plotting learnt rescaled source distribution
     sns.kdeplot(
@@ -636,7 +635,7 @@ def plot_1D_unbalanced(
         ax=axes[0][2],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mathbb{P}$", fontsize=14)
+    axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mu$", fontsize=14)
 
     # Plotting P_2#pi_hat(X,Z)
     sns.kdeplot(
@@ -648,7 +647,7 @@ def plot_1D_unbalanced(
         bw_adjust=kwargs.get("bw_adjust", 1.0),
         ax=axes[0][3],
     )
-    axes[0][3].set_title(r"$T_{\theta}\#(\mathbb{P}\times\mathbb{S})$", fontsize=14)
+    axes[0][3].set_title(r"$T_{\theta}\#(\mu\times\mathbb{S})$", fontsize=14)
 
     # Plotting \eta(x) * P_2#pi_hat(X,Z)
     sns.kdeplot(
@@ -661,7 +660,7 @@ def plot_1D_unbalanced(
         bw_adjust=kwargs.get("bw_adjust", 1.0),
         ax=axes[0][4],
     )
-    axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot T_{\theta}\#(\mathbb{P}\times\mathbb{S})$", fontsize=14)
+    axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot T_{\theta}\#(\mu\times\mathbb{S})$", fontsize=14)
 
     # Plotting learnt plan pi_hat between learnt rescaled source and P_2#pi_hat(X,Z)
     joint_dist = jnp.concatenate((source, t_xz), axis=1)
@@ -715,7 +714,7 @@ def plot_1D_unbalanced(
         ax=axes[1][2],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[1][2].set_title(r"$\xi(y) \cdot \mathbb{Q}$", fontsize=14)
+    axes[1][2].set_title(r"$\xi(y) \cdot \nu$", fontsize=14)
 
     # Plotting rescaled learnt target distribution
     sns.kdeplot(
@@ -728,7 +727,7 @@ def plot_1D_unbalanced(
         ax=axes[1][3],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[1][3].set_title(r"$\hat{\xi}_{\theta}(y) \cdot \mathbb{Q}$", fontsize=14)
+    axes[1][3].set_title(r"$\hat{\xi}_{\theta}(y) \cdot \nu$", fontsize=14)
 
     # Plotting target distribution
     sns.kdeplot(
@@ -740,7 +739,7 @@ def plot_1D_unbalanced(
         ax=axes[1][4],
         bw_adjust=kwargs.get("bw_adjust", 1.0),
     )
-    axes[1][4].set_title(r"$\mathbb{Q}$", fontsize=14)
+    axes[1][4].set_title(r"$\nu$", fontsize=14)
 
     fig.tight_layout(pad=0.01)
     fig.show()
@@ -821,7 +820,7 @@ def plot_1D_balanced_new(
             ax=axes[0],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[0].set_title(r"Input $\mathbb{P}$", fontsize=14)
+        axes[0].set_title(r"$\mu$", fontsize=14)
         axes[0].set_xlabel("Source")
 
         # Plotting P_2#pi_hat(X,Z)
@@ -834,7 +833,7 @@ def plot_1D_balanced_new(
             bw_adjust=kwargs.get("bw_adjust", 1.0),
             ax=axes[1],
         )
-        axes[1].set_title(r"$T_{\theta}\#\mathbb{P}$", fontsize=14)
+        axes[1].set_title(r"$P_2\#\pi_{\theta}$", fontsize=14)
         axes[1].set_ylabel("Mapped Source")
 
         # Plotting learnt plan pi_hat between source and P_2#pi_hat(X,Z)
@@ -888,7 +887,7 @@ def plot_1D_balanced_new(
             ax=axes[4],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[4].set_title(r"$\mathbb{Q}$", fontsize=14)
+        axes[4].set_title(r"$\nu$", fontsize=14)
         axes[4].set_ylabel("Target")
         fig.tight_layout(pad=0.01)
 
