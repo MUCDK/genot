@@ -239,7 +239,7 @@ def plot_1D_balanced(source, target, target_predicted, epsilon, **kwargs):
             bw_adjust=kwargs.get("bw_adjust", 1.0),
             ax=axes[1],
         )
-        axes[1].set_title(r"$P_2\#\pi_{\theta}$", fontsize=14)
+        axes[1].set_title(r"$P_2\#\hat{\pi}_{\theta}$", fontsize=14)
         axes[1].set_ylabel("Mapped Source")
 
         # Plotting learnt plan pi_hat between source and P_2#pi_hat(X,Z)

@@ -1,30 +1,9 @@
-import collections
-import time
-import types
-from functools import partial
-from typing import *
 from typing import Any, Callable, Tuple, Union
-
-import diffrax
-import equinox as eqx  # https://github.com/patrick-kidger/equinox
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import mpl_toolkits.mplot3d.axes3d as p3
-import numpy as np
-import optax  # https://github.com/deepmind/optax
-import ott
-import pandas as pd
-import tensorflow as tf
-import tensorflow_datasets as tfds
+import optax 
 from flax.training import train_state
-from flax.training.train_state import TrainState
-from ott.geometry import costs, geometry, graph, pointcloud
-from ott.problems.linear import linear_problem
-from ott.problems.quadratic import quadratic_problem
-from ott.solvers import was_solver
-from ott.solvers.linear import sinkhorn
 from ott.solvers.nn.models import ModelBase, NeuralTrainState
 
 

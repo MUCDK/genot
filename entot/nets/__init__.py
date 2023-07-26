@@ -1,1 +1,1 @@
-from entot.nets.nets import UNet, UResNet
+from entot.nets.nets import *

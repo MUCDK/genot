@@ -31,7 +31,6 @@ from sklearn.datasets import make_moons, make_swiss_roll
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
-from entot.models.utils import MLP, MLP_FM
 
 Match_fn_T = Callable[
     [jax.random.PRNGKeyArray, jnp.array, jnp.array], Tuple[jnp.array, jnp.array, jnp.array, jnp.array]
@@ -172,17 +171,27 @@ class OTFlowMatching:
             )
         else:
             self.match_latent_to_data_fn = lambda key, x, y, **_: (x, y)
+
+        if isinstance(self.ot_solver, sinkhorn.Sinkhorn):
+            problem_type = "linear"
+        else:
+            problem_type = "fused" if self.fused_penalty > 0 else "quadratic"
+
         if self.cost_fn == "graph":
             self.match_fn = self._get_match_fn_graph(
-                self.ot_solver,
+                problem_type=problem_type,
+                ot_solver=self.ot_solver,
                 epsilon=self.epsilon,
                 tau_a=self.tau_a,
                 tau_b=self.tau_b,
+                fused_penalty=self.fused_penalty,
+                split_dim=self.split_dim,
                 k_samples_per_x=self.k_noise_per_x,
+                scale_cost=self.scale_cost,
                 **self.graph_kwargs,
             )
         else:
-            if isinstance(self.ot_solver, sinkhorn.Sinkhorn):
+            if problem_type=="linear":
                 self.match_fn = self._get_sinkhorn_match_fn(
                     self.ot_solver,
                     epsilon=self.epsilon,
@@ -397,17 +406,20 @@ class OTFlowMatching:
 
     def _get_match_fn_graph(
         self,
+        problem_type: Literal["linear", "quadratic", "fused"],
         ot_solver: Any,
         epsilon: float,
         k_neighbors: int,
         tau_a: float,
         tau_b: float,
         scale_cost: Any,
+        fused_penalty: float,
+        split_dim: int,
         k_samples_per_x: int,
         **kwargs,
     ) -> Callable:
         def get_nearest_neighbors(
-            X: jnp.ndarray, Y: jnp.ndarray, len_x: int, k: int = 30  # type: ignore[name-defined]
+            X: jnp.ndarray, Y: jnp.ndarray, k: int = 30  # type: ignore[name-defined]
         ) -> Tuple[jnp.ndarray, jnp.ndarray]:  # type: ignore[name-defined]
             concat = jnp.concatenate((X, Y), axis=0)
             pairwise_euclidean_distances = pointcloud.PointCloud(concat, concat).cost_matrix
@@ -417,7 +429,7 @@ class OTFlowMatching:
             return distances, indices
 
         def create_cost_matrix(X: jnp.array, Y: jnp.array, k_neighbors: int, **kwargs: Any) -> jnp.array:
-            distances, indices = get_nearest_neighbors(X, Y, len(X), k_neighbors)
+            distances, indices = get_nearest_neighbors(X, Y, k_neighbors)
             a = jnp.zeros((len(X) + len(Y), len(X) + len(Y)))
             adj_matrix = a.at[
                 jnp.repeat(jnp.arange(len(X) + len(Y)), repeats=k_neighbors).flatten(), indices.flatten()
@@ -428,11 +440,14 @@ class OTFlowMatching:
             jax.jit,
             static_argnames=[
                 "ot_solver",
+                "problem_type",
                 "epsilon",
                 "k_neighbors",
                 "tau_a",
                 "tau_b",
                 "k_samples_per_x",
+                "fused_penalty",
+                "split_dim",
             ],
         )
         def match_pairs(
@@ -440,29 +455,51 @@ class OTFlowMatching:
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
+            problem_type: Literal["linear", "quadratic", "fused"],
             epsilon: float,
             tau_a: float,
             tau_b: float,
+            fused_penalty: float,
+            split_dim: int,
             k_neighbors: int,
             k_samples_per_x: int,
             **kwargs,
         ) -> Tuple[jnp.array, jnp.array, jnp.ndarray, jnp.ndarray]:
-            cm = create_cost_matrix(x, y, k_neighbors, **kwargs)
-            geom = geometry.Geometry(cost_matrix=cm, epsilon=epsilon, scale_cost=scale_cost)
-            out = ot_solver(linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
-            inds_source, inds_target = sample_indices_from_tmap(
+            if problem_type == "linear":
+                cm = create_cost_matrix(x, y, k_neighbors, **kwargs)
+                geom = geometry.Geometry(cost_matrix=cm, epsilon=epsilon, scale_cost=scale_cost)
+                out = ot_solver(linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
+            else:
+                cm_xx = create_cost_matrix(x[..., split_dim:], x[..., split_dim:], k_neighbors, **kwargs)
+                cm_yy = create_cost_matrix(y[..., split_dim:], y[..., split_dim:], k_neighbors, **kwargs)
+                geom_xx = geometry.Geometry(cost_matrix=cm_xx, epsilon=epsilon, scale_cost=scale_cost)
+                geom_yy = geometry.Geometry(cost_matrix=cm_yy, epsilon=epsilon, scale_cost=scale_cost)
+                if problem_type == "quadratic":
+                    geom_xy = None
+                else:
+                    cm_xy = create_cost_matrix(x[..., :split_dim], y[..., :split_dim], k_neighbors, **kwargs)
+                    geom_xy = geometry.Geometry(cost_matrix=cm_xy, epsilon=epsilon, scale_cost=scale_cost)
+                prob = quadratic_problem.QuadraticProblem(
+                    geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty, tau_a=tau_a, tau_b=tau_b
+                    )
+                out = ot_solver(prob)
+
+            inds_source, inds_target = sample_conditional_indices_from_tmap(
                 key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x
             )
             return x[inds_source], y[inds_target], out.matrix.sum(axis=0), out.matrix.sum(axis=1)
 
         return jax.tree_util.Partial(
             match_pairs,
+            problem_type=problem_type,
             ot_solver=ot_solver,
             epsilon=epsilon,
             k_neighbors=k_neighbors,
             tau_a=tau_a,
             tau_b=tau_b,
             k_samples_per_x=k_samples_per_x,
+            fused_penalty=fused_penalty,
+            split_dim=split_dim,
             **kwargs,
         )
 
