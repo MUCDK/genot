@@ -1,0 +1,29 @@
+[33mcommit 87e345a14427bc32bb153853e8a1d3cfacd5519e[m[33m ([m[1;36mHEAD -> [m[1;32mdevelopment_2[m[33m)[m
+Author: Dominik Klein <dominik.klein@helmholtz-munich.de>
+Date:   Mon May 22 13:24:40 2023 +0000
+
+    training with small batch size runs
+
+[33mcommit 149ff07e1f91ed1bfe8b12b13abdb010bfe5a1f2[m
+Author: Dominik Klein <dominik.klein@helmholtz-munich.de>
+Date:   Mon May 22 12:54:49 2023 +0000
+
+    1d-plot
+
+[33mcommit b0ef705d7c8610ae6eb249ba8052db5a990830b3[m
+Author: Dominik Klein <dominik.klein@helmholtz-munich.de>
+Date:   Tue May 16 18:50:52 2023 +0000
+
+    save
+
+[33mcommit 5b0cce3daba419b59841cef2c56cc2f1afabd588[m
+Author: Dominik Klein <dominikklein@Dominiks-MacBook-Pro.local>
+Date:   Tue May 16 16:55:04 2023 +0200
+
+    x
+
+[33mcommit 1fbd927608dff5bb1384af9eba413e0b3f4dc3ab[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/TEMPLATE[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m
+Author: dominikklein <dominikklein@Dominiks-MacBook-Pro.local>
+Date:   Mon May 15 11:21:36 2023 +0200
+
+    Create entot with cli-python template of version 2.1.1  using cookietemple.
