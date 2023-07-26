@@ -1,1 +1,1 @@
-from entot.models import gen_model, models
+from entot.models import model, models
