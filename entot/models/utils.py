@@ -31,7 +31,9 @@ class DataLoader(BaseSampler):
 
 
 class MixtureNormalSampler(BaseSampler):
-    def __init__(self, rng: jax.random.KeyArray, centers: Iterable[int], dim: int, std: float = 1.0, batch_size: int = 64) -> None:
+    def __init__(
+        self, rng: jax.random.KeyArray, centers: Iterable[int], dim: int, std: float = 1.0, batch_size: int = 64
+    ) -> None:
         super().__init__()
         self.batch_size = batch_size
         self.centers = jnp.array(centers)
