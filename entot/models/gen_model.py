@@ -508,9 +508,11 @@ class OTFlowMatching:
             params_xi: Optional[jnp.ndarray], apply_fn_xi: Optional[Callable], x: jnp.ndarray, b: jnp.ndarray
         ) -> float:
             xi_predictions = apply_fn_xi({"params": params_xi}, x)
-            return optax.l2_loss(xi_predictions[:, 0], b).sum(), xi_predictions
+            #jax.debug.print("xi predictions are {x}", x=xi_predictions)
+            #jax.debug.print("b is {x}", x=b)
+            return optax.l2_loss(xi_predictions, b).sum(), xi_predictions
 
-        @jax.jit
+        #@jax.jit
         def step_fn(
             key: jax.random.PRNGKeyArray,
             state_neural_net: TrainState,
@@ -559,11 +561,13 @@ class OTFlowMatching:
                 new_state_eta = eta_predictions = None
             if state_xi is not None:
                 grad_b_fn = jax.value_and_grad(loss_b_fn, argnums=0, has_aux=True)
+                #jax.debug.print("original_target_batch[:,] {x}", x=original_target_batch[:,].shape)
+                #jax.debug.print("b * len(original_target_batch2) {x}", x=((b * len(original_target_batch))[:,None]).shape)
                 (loss_b, xi_predictions), grads_xi = grad_b_fn(
                     state_xi.params,
                     state_xi.apply_fn,
                     original_target_batch[:,],
-                    b * len(original_target_batch),
+                    (b * len(original_target_batch))[:,None],
                 )
                 new_state_xi = state_xi.apply_gradients(grads=grads_xi)
                 metrics["loss_xi"] = loss_b
@@ -880,7 +884,8 @@ class Simple_MLP2(ModelBase):
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:  # noqa: D102
         x = Block(dim=self.hidden_dim, out_dim=self.hidden_dim, activation_fn=self.act_fn)(x)
         Wx = nn.Dense(self.output_dim, use_bias=True, name="final_layer")
-        return nn.relu(Wx(x))        
+        z = Wx(x)
+        return jnp.exp(z)        
 
     def create_train_state(
         self,

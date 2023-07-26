@@ -70,7 +70,7 @@ def plot_1D(source, target, t_xz, sinkhorn_output, **kwargs):
     )
     inds_source = pi_star_inds // len(target)
     inds_target = pi_star_inds % len(target)
-    data = _concatenate(source[inds_source], t_xz[inds_target])
+    data = jnp.concatenate((jnp.atleast_2d(source[inds_source]), jnp.atleast_2d(t_xz[inds_target])), axis=1)
     gt = pd.DataFrame(data=data, columns=["source", "target"])
     sns.kdeplot(
         data=gt,
@@ -388,11 +388,21 @@ def plot_1D_unbalanced_new(
         fig, axes = plt.subplots(2, 5, figsize=(24, 16), dpi=150)
 
         geom = ott.geometry.pointcloud.PointCloud(source, target_predicted, epsilon=epsilon, scale_cost="mean")
-        out = ott.solvers.linear.sinkhorn.Sinkhorn()(
+        #out_pred = ott.solvers.linear.sinkhorn.Sinkhorn()(
+        #    ott.problems.linear.linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b)
+        #)
+        out_pred = ott.solvers.linear.sinkhorn.Sinkhorn()(
+            ott.problems.linear.linear_problem.LinearProblem(geom)
+        )
+        a_pred, b_pred = out_pred.matrix.sum(axis=1), out_pred.matrix.sum(axis=0)
+        
+        geom = ott.geometry.pointcloud.PointCloud(source, target, epsilon=epsilon, scale_cost="mean")
+        out_true = ott.solvers.linear.sinkhorn.Sinkhorn()(
             ott.problems.linear.linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b)
         )
         
-        a, b = out.matrix.sum(axis=1), out.matrix.sum(axis=0)
+        a_true, b_true = out_true.matrix.sum(axis=1), out_true.matrix.sum(axis=0)
+
 
         axes[0][0].set_xlim(kwargs.pop("00_xlim", (-2.5, 2.5)))
         axes[0][0].set_ylim(kwargs.pop("00_ylim", (0, 2.0)))
@@ -432,7 +442,7 @@ def plot_1D_unbalanced_new(
             x=source[:, 0],
             color="darkseagreen",
             fill=True,
-            weights=a,
+            weights=a_true,
             edgecolor="black",
             alpha=0.95,
             ax=axes[0][1],
@@ -453,7 +463,7 @@ def plot_1D_unbalanced_new(
         )
         axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mathbb{P}$", fontsize=14)
 
-        # Plotting P_2#pi_hat(X,Z)
+        # Plotting P_2#pi_hat(X,Y)
         sns.kdeplot(
             y=target_predicted[:, 0],
             color="sandybrown",
@@ -463,9 +473,9 @@ def plot_1D_unbalanced_new(
             bw_adjust=kwargs.get("bw_adjust", 1.0),
             ax=axes[0][3],
         )
-        axes[0][3].set_title(r"$T_{\theta}\#\mathbb{P}$", fontsize=14)
+        axes[0][3].set_title(r"$P_2#\pi_{\theta}$", fontsize=14)
 
-        # Plotting \eta(x) * P_2#pi_hat(X,Z)
+        # Plotting \hat{\eta}(x) * P_2#pi_hat(X,Z)
         sns.kdeplot(
             y=target_predicted[:, 0],
             color="sandybrown",
@@ -485,7 +495,7 @@ def plot_1D_unbalanced_new(
             data=jd,
             x="source",
             y="mapped",
-            weights=a,
+            weights=eta_predictions[:,0],
             color="black",
             alpha=1.0,
             ax=axes[1][0],
@@ -493,19 +503,19 @@ def plot_1D_unbalanced_new(
         )
         axes[1][0].set_title(r"$\hat{\pi}_{\theta}$", fontsize=14)
 
-        # Plotting ground truth plan between learnt rescaled source and P_2#pi_hat(X,Z)
+        # Plotting ground truth plan between learnt rescaled source and P_2#pi_hat(X,Y)
         pi_star_inds = jax.random.categorical(
-            jax.random.PRNGKey(0), logits=jnp.log(out.matrix.flatten()), shape=(len(source),)
+            jax.random.PRNGKey(0), logits=jnp.log(out_pred.matrix.flatten()), shape=(len(source),)
         )
         inds_source = pi_star_inds // len(target)
         inds_target = pi_star_inds % len(target)
-        data = _concatenate(source[inds_source], target_predicted[inds_target])
-        gt = pd.DataFrame(data=data, columns=["source", "mapped_source"])
+        data = jnp.concatenate((jnp.atleast_2d(source[inds_source]), jnp.atleast_2d(target_predicted[inds_target]), jnp.atleast_2d(eta_predictions[inds_source])), axis=1)
+        gt = pd.DataFrame(data=data, columns=["source", "mapped_source", "predicted_weights"])
         sns.kdeplot(
             data=gt,
             x="source",
             y="mapped_source",
-            weights=a,
+            weights="predicted_weights",
             color="black",
             alpha=1.0,
             ax=axes[1][1],
@@ -514,7 +524,7 @@ def plot_1D_unbalanced_new(
         axes[1][1].set_title(r"$\pi^*$", fontsize=14)
 
         # Plotting rescaled target distribution
-        df = pd.DataFrame(data=np.concatenate((target, b[:, None]), axis=1), columns=["target", "weights"])
+        df = pd.DataFrame(data=np.concatenate((target, b_true[:, None]), axis=1), columns=["target", "weights"])
         sns.kdeplot(
             data=df,
             y="target",
@@ -569,9 +579,6 @@ def plot_1D_unbalanced(
 
     a, b = sinkhorn_output_unbalanced.matrix.sum(axis=1), sinkhorn_output_unbalanced.matrix.sum(axis=0)
 
-    # axes[0][0].set_axisbelow(True); axes[0][0].grid(axis='x')
-    # axes[0][2].set_axisbelow(True); axes[0][2].grid(axis='y')
-    # axes[0][4].set_axisbelow(True); axes[0][4].grid(axis='y')
     axes[0][0].set_xlim(kwargs.pop("00_xlim", (-2.5, 2.5)))
     axes[0][0].set_ylim(kwargs.pop("00_ylim", (0, 2.0)))
     axes[0][1].set_xlim(kwargs.pop("01_xlim", (-2.5, 2.5)))
@@ -681,7 +688,7 @@ def plot_1D_unbalanced(
     )
     inds_source = pi_star_inds // len(target)
     inds_target = pi_star_inds % len(target)
-    data = _concatenate(source[inds_source], t_xz[inds_target])
+    data = jnp.concatenate((jnp.atleast_2d(source[inds_source]), jnp.atleast_2d(t_xz[inds_target])), axis=1)
     gt = pd.DataFrame(data=data, columns=["source", "mapped_source"])
     sns.kdeplot(
         data=gt,
@@ -856,7 +863,7 @@ def plot_1D_balanced_new(
         )
         inds_source = pi_star_inds // len(target)
         inds_target = pi_star_inds % len(target)
-        data = _concatenate(source[inds_source], target_predicted[inds_target])
+        data = jnp.concatenate((jnp.atleast_2d(source[inds_source]), jnp.atleast_2d(target_predicted[inds_target])), axis=1)
         gt = pd.DataFrame(data=data, columns=["source", "mapped_source"])
         sns.kdeplot(
             data=gt,
