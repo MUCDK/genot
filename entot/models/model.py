@@ -434,7 +434,7 @@ class OTFlowMatching:
             adj_matrix = a.at[
                 jnp.repeat(jnp.arange(len(X) + len(Y)), repeats=k_neighbors).flatten(), indices.flatten()
             ].set(distances.flatten())
-            return graph.Graph.from_graph(adj_matrix, normalize=kwargs.pop("normalize", True), **kwargs).cost_matrix
+            return graph.Graph.from_graph(adj_matrix[:len(X), len(X):], normalize=kwargs.pop("normalize", True), **kwargs).cost_matrix
 
         @partial(
             jax.jit,
@@ -554,11 +554,9 @@ class OTFlowMatching:
             params_xi: Optional[jnp.ndarray], apply_fn_xi: Optional[Callable], x: jnp.ndarray, b: jnp.ndarray
         ) -> float:
             xi_predictions = apply_fn_xi({"params": params_xi}, x)
-            # jax.debug.print("xi predictions are {x}", x=xi_predictions)
-            # jax.debug.print("b is {x}", x=b)
             return optax.l2_loss(xi_predictions, b).sum(), xi_predictions
 
-        @jax.jit
+        #@jax.jit
         def step_fn(
             key: jax.random.PRNGKeyArray,
             state_neural_net: TrainState,
