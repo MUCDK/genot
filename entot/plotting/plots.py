@@ -7,7 +7,6 @@ import pandas as pd
 import seaborn as sns
 from IPython.display import clear_output, display
 
-from entot.models.utils import _concatenate
 
 
 def plot_1D_unbalanced(

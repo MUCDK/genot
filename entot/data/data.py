@@ -1,5 +1,5 @@
-from typing import List, Tuple
-
+from typing import List, Tuple, Iterable, Union, Optional
+from abc import ABC
 import jax
 import jax.numpy as jnp
 from jax import random
@@ -40,3 +40,50 @@ def create_gaussian_split(
     target_1 = random.normal(rngs[2], shape=(n_target_1, dimension)) * var_target + jnp.array(means[1])
     target_2 = random.normal(rngs[3], shape=(n_target_2, dimension)) * var_target + jnp.array(means[2])
     return source, jnp.concatenate([target_1, target_2], axis=0)
+
+class BaseSampler(ABC):
+    pass
+
+
+class DataLoader(BaseSampler):
+    def __init__(self, data: Optional[jnp.ndarray] = None, batch_size: int = 64) -> None:
+        super().__init__()
+        self.data = data
+        self.batch_size = batch_size
+
+    def __call__(self, key: jax.random.KeyArray) -> jnp.ndarray:
+        inds = jax.random.choice(key, len(self.data), shape=[self.batch_size])
+        return self.data[inds, :]
+
+
+class MixtureNormalSampler(BaseSampler):
+    def __init__(
+        self, rng: jax.random.KeyArray, centers: Iterable[int], dim: int, std: float = 1.0, batch_size: int = 64
+    ) -> None:
+        super().__init__()
+        self.batch_size = batch_size
+        self.centers = jnp.array(centers)
+        self.dim = dim
+        self.std = std
+        self.rng = rng
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> jnp.ndarray:
+        self.rng, rng = jax.random.split(self.rng, 2)
+        if len(self.centers) > 1:
+            comps_idx = jax.random.categorical(
+                rng, jnp.repeat(jnp.log(1.0 / len(self.centers)), len(self.centers)), shape=(self.batch_size,)
+            ).astype(int)
+        else:
+            comps_idx = jnp.zeros(
+                self.batch_size,
+            ).astype(int)
+        if self.dim > 1:
+            std_normal = jax.random.normal(rng, (self.batch_size, self.dim))
+        else:
+            std_normal = jax.random.normal(rng, (self.batch_size,))
+        self.centers[comps_idx]
+        return jnp.reshape(std_normal * self.std + self.centers[comps_idx], (self.batch_size, self.dim))
+

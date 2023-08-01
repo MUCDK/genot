@@ -84,14 +84,14 @@ class OTFlowMatching:
         ot_solver: Type[was_solver.WassersteinSolver],
         optimizer: Optional[Any] = None,
         k_noise_per_x: int = 1,
-        n_samples: Optional[int] = None,
+        t_offset: float = 1e-5,
         epsilon: float = 1e-2,
         cost_fn: Union[costs.CostFn, Literal["graph"]] = costs.SqEuclidean(),
         sig_min: float = 1e-15,
         solver_latent_to_data: Optional[Type[was_solver.WassersteinSolver]] = None,
         latent_to_data_epsilon: float = 1e-2,
-        latent_to_data_cost: Any = "mean",
-        scale_cost: Any = "mean",
+        latent_to_data_scale_cost: Any = 1.0,
+        scale_cost: Any = 1.0,
         graph_kwargs: Dict[str, Any] = types.MappingProxyType({}),
         fused_penalty: float = 0.0,
         split_dim: int = 0,
@@ -123,7 +123,7 @@ class OTFlowMatching:
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.k_noise_per_x = k_noise_per_x
-        self.n_samples = n_samples
+        self.t_offset = t_offset
 
         # OT data-data matching parameters
         self.ot_solver = ot_solver
@@ -140,7 +140,7 @@ class OTFlowMatching:
         # OT latent-data matching parameters
         self.solver_latent_to_data = solver_latent_to_data
         self.latent_to_data_epsilon = latent_to_data_epsilon
-        self.latent_to_data_cost = latent_to_data_cost
+        self.latent_to_data_scale_cost = latent_to_data_scale_cost
 
         # unbalancedness parameters
         self.mlp_eta = mlp_eta
@@ -167,7 +167,7 @@ class OTFlowMatching:
         self.step_fn = self._get_step_fn()
         if self.solver_latent_to_data is not None:
             self.match_latent_to_data_fn = self._get_match_latent_fn(
-                self.solver_latent_to_data, self.latent_to_data_epsilon, self.latent_to_data_cost
+                self.solver_latent_to_data, self.latent_to_data_epsilon, self.latent_to_data_scale_cost
             )
         else:
             self.match_latent_to_data_fn = lambda key, x, y, **_: (x, y)
@@ -252,8 +252,7 @@ class OTFlowMatching:
             batch["source"] = source_batch
             batch["target"] = target_batch
             n_samples = len(source_batch) * self.k_noise_per_x
-            eps = 1e-5
-            t = (jax.random.uniform(rng_time, (1,)) + jnp.arange(n_samples) / n_samples) % (1 - eps)
+            t = (jax.random.uniform(rng_time, (1,)) + jnp.arange(n_samples) / n_samples) % (1 - self.t_offset)
             batch["time"] = t[:, None]
             batch["noise"] = self.noise_fn(rng_noise, shape=(len(source_batch), self.k_noise_per_x))
             (
@@ -529,14 +528,14 @@ class OTFlowMatching:
             batch: Dict[str, jnp.array],
             sig_min: float,
         ):
-            def psi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray, sig_0: float) -> jnp.ndarray:
+            def phi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray, sig_0: float) -> jnp.ndarray:
                 return (sig_0 - (sig_0 - sig_min) * t) * x_0 + t * x_1
 
             mu_0, sig_0 = apply_fn_bridge({"params": params_bridge_net}, condition=batch["source"])
             mu_noisy = mu_0 + batch["noise"] * sig_0
-            psi_t_eval = psi_t(mu_noisy, batch["target"], batch["time"], sig_0)
+            phi_t_eval = phi_t(mu_noisy, batch["target"], batch["time"], sig_0)
             mlp_pred = apply_fn_mlp(
-                {"params": params_mlp}, t=batch["time"], latent=psi_t_eval, condition=batch["source"]
+                {"params": params_mlp}, t=batch["time"], latent=phi_t_eval, condition=batch["source"]
             )
             d_psi = batch["target"] - (sig_0 - sig_min) * mu_noisy
 
