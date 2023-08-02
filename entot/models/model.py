@@ -87,7 +87,6 @@ class OTFlowMatching:
         t_offset: float = 1e-5,
         epsilon: float = 1e-2,
         cost_fn: Union[costs.CostFn, Literal["graph"]] = costs.SqEuclidean(),
-        sig_min: float = 1e-15,
         solver_latent_to_data: Optional[Type[was_solver.WassersteinSolver]] = None,
         latent_to_data_epsilon: float = 1e-2,
         latent_to_data_scale_cost: Any = 1.0,
@@ -128,7 +127,6 @@ class OTFlowMatching:
         # OT data-data matching parameters
         self.ot_solver = ot_solver
         self.epsilon = epsilon
-        self.sig_min = sig_min
         self.cost_fn = cost_fn
         self.scale_cost = scale_cost
         self.graph_kwargs = graph_kwargs  # "k_neighbors", kwargs for graph.Graph.from_graph()
@@ -268,7 +266,6 @@ class OTFlowMatching:
                 self.state_neural_net,
                 self.state_bridge_net,
                 batch,
-                self.sig_min,
                 self.state_eta,
                 self.state_xi,
             )
@@ -526,21 +523,20 @@ class OTFlowMatching:
             apply_fn_mlp: Callable,
             apply_fn_bridge: Callable,
             batch: Dict[str, jnp.array],
-            sig_min: float,
         ):
-            def phi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray, sig_0: Union[float, jnp.ndarray], sig_min: float) -> jnp.ndarray:
-                return (sig_0 - (sig_0 - sig_min) * t) * x_0 + t * x_1
+            def phi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray, sig_0: Union[float, jnp.ndarray]) -> jnp.ndarray:
+                return sig_0 * (1-t) * x_0 + t * x_1
 
-            def u_t(x_0: jnp.ndarray, x_1: jnp.ndarray, sig_0: Union[float, jnp.ndarray], sig_min: float) -> jnp.ndarray:
-                return x_1 - (sig_0 - sig_min) * x_0
+            def u_t(x_0: jnp.ndarray, x_1: jnp.ndarray) -> jnp.ndarray:
+                return x_1 - x_0
 
             mu_0, sig_0 = apply_fn_bridge({"params": params_bridge_net}, condition=batch["source"])
             mu_noisy = mu_0 + batch["noise"] * sig_0
-            phi_t_eval = phi_t(mu_noisy, batch["target"], batch["time"], sig_0, sig_min)
+            phi_t_eval = phi_t(mu_noisy, batch["target"], batch["time"], sig_0)
             mlp_pred = apply_fn_mlp(
                 {"params": params_mlp}, t=batch["time"], latent=phi_t_eval, condition=batch["source"]
             )
-            d_psi = u_t(mu_noisy, batch["target"], sig_0, sig_min) #TODO check here!!!
+            d_psi = u_t(mu_noisy, batch["target"])
             
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
@@ -564,7 +560,6 @@ class OTFlowMatching:
             state_neural_net: TrainState,
             state_bridge_net: TrainState,
             batch: Dict[str, jnp.array],
-            sig_min: float,
             state_eta: Optional[TrainState] = None,
             state_xi: Optional[TrainState] = None,
         ):
@@ -589,7 +584,6 @@ class OTFlowMatching:
                 state_neural_net.apply_fn,
                 state_bridge_net.apply_fn,
                 batch,
-                sig_min,
             )
             metrics = {}
             metrics["loss"] = loss
