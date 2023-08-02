@@ -528,17 +528,20 @@ class OTFlowMatching:
             batch: Dict[str, jnp.array],
             sig_min: float,
         ):
-            def phi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray, sig_0: float) -> jnp.ndarray:
+            def phi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray, sig_0: Union[float, jnp.ndarray], sig_min: float) -> jnp.ndarray:
                 return (sig_0 - (sig_0 - sig_min) * t) * x_0 + t * x_1
+
+            def u_t(x_0: jnp.ndarray, x_1: jnp.ndarray, sig_0: Union[float, jnp.ndarray], sig_min: float) -> jnp.ndarray:
+                return x_1 - (sig_0 - sig_min) * x_0
 
             mu_0, sig_0 = apply_fn_bridge({"params": params_bridge_net}, condition=batch["source"])
             mu_noisy = mu_0 + batch["noise"] * sig_0
-            phi_t_eval = phi_t(mu_noisy, batch["target"], batch["time"], sig_0)
+            phi_t_eval = phi_t(mu_noisy, batch["target"], batch["time"], sig_0, sig_min)
             mlp_pred = apply_fn_mlp(
                 {"params": params_mlp}, t=batch["time"], latent=phi_t_eval, condition=batch["source"]
             )
-            d_psi = batch["target"] - (sig_0 - sig_min) * mu_noisy
-
+            d_psi = u_t(mu_noisy, batch["target"], sig_0, sig_min) #TODO check here!!!
+            
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
             return jnp.mean(optax.l2_loss(mlp_pred, d_psi))
