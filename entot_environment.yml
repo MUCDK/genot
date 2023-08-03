@@ -1,4 +1,4 @@
-name: jax
+name: jax_new
 channels:
   - nvidia
   - conda-forge
@@ -354,8 +354,6 @@ dependencies:
       - astunparse==1.6.3
       - cachetools==5.3.1
       - diffrax==0.4.0
-      - e==1.4.5
-      - entot==0.1.0
       - equinox==0.10.11
       - etils==1.4.1
       - flatbuffers==23.5.26

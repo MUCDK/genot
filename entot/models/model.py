@@ -158,9 +158,9 @@ class OTFlowMatching:
 
     def setup(self, **kwargs: Any) -> None:
         self.state_neural_net = self.neural_net.create_train_state(
-            self.rng, self.optimizer, self.output_dim, self.output_dim
+            self.rng, self.optimizer, self.input_dim, self.output_dim
         )
-        self.state_bridge_net = self.bridge_net.create_train_state(self.rng, self.optimizer, self.output_dim)
+        self.state_bridge_net = self.bridge_net.create_train_state(self.rng, self.optimizer, self.input_dim)
 
         self.step_fn = self._get_step_fn()
         if self.solver_latent_to_data is not None:
@@ -554,7 +554,7 @@ class OTFlowMatching:
             xi_predictions = apply_fn_xi({"params": params_xi}, x)
             return optax.l2_loss(xi_predictions, b).sum(), xi_predictions
 
-        #@jax.jit
+        @jax.jit
         def step_fn(
             key: jax.random.PRNGKeyArray,
             state_neural_net: TrainState,

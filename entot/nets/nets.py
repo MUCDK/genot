@@ -80,9 +80,9 @@ class Bridge_MLP_mean(ModelBase):
         self,
         rng: jax.random.PRNGKeyArray,
         optimizer: optax.OptState,
-        output_dim: int,
+        input_dim: int,
     ) -> NeuralTrainState:
-        params = self.init(rng, jnp.ones((1, output_dim)))["params"]
+        params = self.init(rng, jnp.ones((1, input_dim)))["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
 
@@ -127,9 +127,9 @@ class Bridge_MLP_constant(ModelBase):
         self,
         rng: jax.random.PRNGKeyArray,
         optimizer: optax.OptState,
-        output_dim: int,
+        input_dim: int,
     ) -> NeuralTrainState:
-        params = self.init(rng, jnp.ones((1, output_dim)))["params"]
+        params = self.init(rng, jnp.ones((1, input_dim)))["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
 
@@ -150,7 +150,7 @@ class MLP_marginal(ModelBase):
         self,
         rng: jax.random.PRNGKeyArray,
         optimizer: optax.OptState,
-        output_dim: int,
+        input_dim: int,
     ) -> NeuralTrainState:
-        params = self.init(rng, jnp.ones((1, output_dim)))["params"]
+        params = self.init(rng, jnp.ones((1, input_dim)))["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
