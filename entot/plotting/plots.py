@@ -15,10 +15,10 @@ def plot_1D_unbalanced(
     with jax.default_device(jax.devices("cpu")[0]):
         fig, axes = plt.subplots(2, 5, figsize=(24, 16), dpi=150)
 
-        geom = ott.geometry.pointcloud.PointCloud(source, target_predicted, epsilon=epsilon, scale_cost="mean")
+        geom = ott.geometry.pointcloud.PointCloud(source, target_predicted, epsilon=epsilon, scale_cost=1.0)
         out_pred = ott.solvers.linear.sinkhorn.Sinkhorn()(ott.problems.linear.linear_problem.LinearProblem(geom))
 
-        geom = ott.geometry.pointcloud.PointCloud(source, target, epsilon=epsilon, scale_cost="mean")
+        geom = ott.geometry.pointcloud.PointCloud(source, target, epsilon=epsilon, scale_cost=1.0)
         out_true = ott.solvers.linear.sinkhorn.Sinkhorn()(
             ott.problems.linear.linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b)
         )
@@ -258,7 +258,7 @@ def plot_1D_balanced(source, target, target_predicted, epsilon, **kwargs):
         axes[2].set_ylabel("Mapped Source")
 
         # Plotting ground truth plan between learnt rescaled source and P_2#pi_hat(X,Z)
-        geom = ott.geometry.pointcloud.PointCloud(source, target_predicted, epsilon=epsilon)
+        geom = ott.geometry.pointcloud.PointCloud(source, target_predicted, epsilon=epsilon, scale_cost=1.0)
         out = ott.solvers.linear.sinkhorn.Sinkhorn()(ott.problems.linear.linear_problem.LinearProblem(geom))
         pi_star_inds = jax.random.categorical(
             jax.random.PRNGKey(0), logits=jnp.log(out.matrix.flatten()), shape=(len(source),)

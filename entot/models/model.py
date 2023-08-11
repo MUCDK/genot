@@ -543,16 +543,16 @@ class OTFlowMatching:
             return jnp.mean(optax.l2_loss(mlp_pred, d_psi))
 
         def loss_a_fn(
-            params_eta: Optional[jnp.ndarray], apply_fn_eta: Optional[Callable], x: jnp.ndarray, a: jnp.ndarray
+            params_eta: Optional[jnp.ndarray], apply_fn_eta: Optional[Callable], x: jnp.ndarray, a: jnp.ndarray, total_mass: float,
         ) -> float:
             eta_predictions = apply_fn_eta({"params": params_eta}, x)
-            return optax.l2_loss(eta_predictions[:, 0], a).sum(), eta_predictions
+            return optax.l2_loss(eta_predictions[:, 0], a).sum() + optax.l2_loss(eta_predictions.sum() - total_mass), eta_predictions
 
         def loss_b_fn(
-            params_xi: Optional[jnp.ndarray], apply_fn_xi: Optional[Callable], x: jnp.ndarray, b: jnp.ndarray
+            params_xi: Optional[jnp.ndarray], apply_fn_xi: Optional[Callable], x: jnp.ndarray, b: jnp.ndarray, total_mass: float
         ) -> float:
             xi_predictions = apply_fn_xi({"params": params_xi}, x)
-            return optax.l2_loss(xi_predictions, b).sum(), xi_predictions
+            return optax.l2_loss(xi_predictions, b).sum() + optax.l2_loss(xi_predictions.sum() - total_mass), xi_predictions
 
         @jax.jit
         def step_fn(
@@ -567,12 +567,11 @@ class OTFlowMatching:
             original_source_batch = batch["source"]
             original_target_batch = batch["target"]
             source_batch, target_batch, a, b = self.match_fn(rng_match, batch["source"], batch["target"])
-
             rng_noise = jax.random.split(rng_noise, (len(target_batch)))
             noise_matched, conditional_target = jax.vmap(self.match_latent_to_data_fn, 0, 0)(
                 key=rng_noise, x=batch["noise"], y=target_batch
             )
-
+          
             batch["source"] = jnp.reshape(source_batch, (len(source_batch), -1))
             batch["target"] = jnp.reshape(conditional_target, (len(source_batch), -1))
             batch["noise"] = jnp.reshape(noise_matched, (len(source_batch), -1))
@@ -587,6 +586,16 @@ class OTFlowMatching:
             )
             metrics = {}
             metrics["loss"] = loss
+            
+            if state_eta is not None:
+                integration_eta = jnp.mean(state_eta.apply_fn({"params": state_eta.params}, original_source_batch))
+            else:
+                integration_eta = 1.0
+            
+            if state_xi is not None:
+                integration_xi = jnp.mean(state_xi.apply_fn({"params": state_xi.params}, original_target_batch))
+            else:
+                integration_xi = 1.0
 
             if state_eta is not None:
                 grad_a_fn = jax.value_and_grad(loss_a_fn, argnums=0, has_aux=True)
@@ -595,6 +604,7 @@ class OTFlowMatching:
                     state_eta.apply_fn,
                     original_source_batch[:,],
                     a * len(original_source_batch),
+                    integration_xi,
                 )
                 new_state_eta = state_eta.apply_gradients(grads=grads_eta)
                 metrics["loss_eta"] = loss_a
@@ -608,6 +618,7 @@ class OTFlowMatching:
                     state_xi.apply_fn,
                     original_target_batch[:,],
                     (b * len(original_target_batch))[:, None],
+                    integration_eta,
                 )
                 new_state_xi = state_xi.apply_gradients(grads=grads_xi)
                 metrics["loss_xi"] = loss_b
