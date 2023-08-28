@@ -47,46 +47,21 @@ def sample_indices_from_tmap(
 
 
 def sample_conditional_indices_from_tmap(
-    key: jax.random.PRNGKeyArray, tmat: jnp.ndarray, k_samples_per_x: Union[int, jnp.ndarray]
+    key: jax.random.PRNGKeyArray, tmat: jnp.ndarray, k_samples_per_x: Union[int, jnp.ndarray], left_marginals: Optional[jnp.ndarray], *, is_balanced: bool
 ) -> Tuple[jnp.array, jnp.array]:
-    k_samples_per_x = jnp.full((len(tmat), ), k_samples_per_x) if isinstance(k_samples_per_x, int) else k_samples_per_x
-    jax.debug.print("shape of k samples per x {x}", x=k_samples_per_x.shape)
-    tmat_augmented = jnp.repeat(tmat, k_samples_per_x, axis=0)
-    jax.debug.print("shape of tmat augmented {x}", x=tmat_augmented.shape)
-    jax.debug.print("shape of a argument {x}", x=jnp.arange(tmat.shape[1]).shape)
+    if not is_balanced:
+        key, key2 = jax.random.split(key, 2)
+        indices = jax.random.choice(key=key2, a=jnp.arange(len(left_marginals)), p=left_marginals, shape=(len(left_marginals),))
+    else:
+        indices = jnp.arange(tmat.shape[0])
+    tmat_adapted = tmat[indices]
     indices_per_row = jax.vmap(
-        lambda tmat_augmented: jax.random.choice(key=key, a=jnp.arange(tmat.shape[1]), p=tmat_augmented, shape=(1,)),
+        lambda tmat_adapted: jax.random.choice(key=key, a=jnp.arange(tmat.shape[1]), p=tmat_adapted, shape=(k_samples_per_x,)),
         in_axes=0,
         out_axes=0,
-    )(tmat_augmented)
+    )(tmat_adapted)
 
-    return jnp.repeat(jnp.arange(tmat.shape[0]), k_samples_per_x), indices_per_row % tmat.shape[1]
-
-def adapt_k_samples_per_x(key: jax.random.PRNGKeyArray, a: jnp.ndarray, k_samples_per_x: int) -> jnp.ndarray:
-    jax.debug.print("a shape 0 is {x} ", x=a.shape[0])
-    source_sample_inds = jax.random.choice(key, a.shape[0], shape = (a.shape[0]*k_samples_per_x,), p=a)
-    c1 = len(source_sample_inds)
-    c2 = a.shape[0]
-    v_k_samples_per_x = jax.vmap(lambda x: c1 - jnp.count_nonzero(source_sample_inds - x))(jnp.arange(c2)) 
-    jax.debug.print("{x}", x=v_k_samples_per_x.shape)
-    jax.debug.print("sum of k samples per x {x}", x=jnp.sum(k_samples_per_x))
-    return v_k_samples_per_x
-    
-def sinkhorn_fn(
-    key: jax.random.PRNGKeyArray,
-    ot_solver: Type[was_solver.WassersteinSolver],
-    x: jnp.ndarray,
-    y: jnp.ndarray,
-    **kwargs: Any,
-):
-    ot_solver = sinkhorn.Sinkhorn()
-    geom = pointcloud.PointCloud(
-        x, y, epsilon=kwargs.pop("epsilon", 1e-2), scale_cost=kwargs.pop("scale_cost", "mean"), **kwargs
-    )
-    out = ot_solver(linear_problem.LinearProblem(geom))
-    inds_source, inds_target = sample_conditional_indices_from_tmap(key, out.matrix, 1)
-    return x[inds_source], y[inds_target]
-
+    return jnp.repeat(indices, k_samples_per_x), indices_per_row % tmat.shape[1]
 
 class OTFlowMatching:
     def __init__(
@@ -120,6 +95,11 @@ class OTFlowMatching:
         seed: int = 0,
         **kwargs: Any,
     ) -> None:
+
+        if isinstance(ot_solver, gromov_wasserstein.GromovWasserstein) and epsilon is not None:
+            raise ValueError("If `ot_solver` is `GromovWasserstein`, `epsilon` must be `None`. This check is performed "
+            "to ensure that in the (fused) Gromov case the `epsilon` parameter is passed via the `ot_solver`.")
+
         # setup parameters
         self.rng = jax.random.PRNGKey(seed)
         self.iterations = iterations
@@ -217,7 +197,6 @@ class OTFlowMatching:
             else:
                 self.match_fn = self._get_gromov_match_fn(
                     self.ot_solver,
-                    epsilon=self.epsilon,
                     cost_fn=self.cost_fn,
                     tau_a=self.tau_a,
                     tau_b=self.tau_b,
@@ -307,10 +286,10 @@ class OTFlowMatching:
         scale_cost: Any,
         k_samples_per_x: int,
     ) -> Callable:
-        #@partial(
-        #    jax.jit,
-        #    static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x"],
-        #)
+        @partial(
+            jax.jit,
+            static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x"],
+        )
         def match_pairs(
             key: jax.random.PRNGKeyArray,
             x: jnp.ndarray,
@@ -326,11 +305,8 @@ class OTFlowMatching:
             geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost, cost_fn=cost_fn)
             out = ot_solver(linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
             a, b = out.matrix.sum(axis=1), out.matrix.sum(axis=0)
-            if not ((tau_a == 1.0) and (tau_b == 1.0)):
-                key, key2 = jax.random.split(key, num=2)
-                k_samples_per_x = adapt_k_samples_per_x(key2, a, k_samples_per_x)
             inds_source, inds_target = sample_conditional_indices_from_tmap(
-                key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x
+                key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x, left_marginals=a, is_balanced=(tau_a == 1.0) and (tau_b == 1.0)
             )
             return x[inds_source], y[inds_target], a, b
 
@@ -351,7 +327,6 @@ class OTFlowMatching:
         cost_fn: str,
         tau_a: float,
         tau_b: float,
-        epsilon: float,
         scale_cost: Any,
         split_dim: int,
         fused_penalty: float,
@@ -361,7 +336,6 @@ class OTFlowMatching:
             jax.jit,
             static_argnames=[
                 "ot_solver",
-                "epsilon",
                 "cost_fn",
                 "scale_cost",
                 "fused_penalty",
@@ -376,7 +350,6 @@ class OTFlowMatching:
             x: Tuple[jnp.ndarray, jnp.ndarray],
             y: Tuple[jnp.ndarray, jnp.ndarray],
             ot_solver: Any,
-            epsilon: float,
             tau_a: float,
             tau_b: float,
             cost_fn: str,
@@ -401,15 +374,15 @@ class OTFlowMatching:
                 geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty, tau_a=tau_a, tau_b=tau_b
             )
             out = ot_solver(prob)
+            a, b = out.matrix.sum(axis=1), out.matrix.sum(axis=0)
             inds_source, inds_target = sample_conditional_indices_from_tmap(
-                key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x
+                key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x, left_marginals=a, is_balanced=(tau_a == 1.0) and (tau_b == 1.0)
             )
-            return x[inds_source], y[inds_target], out.matrix.sum(axis=1), out.matrix.sum(axis=0)
+            return x[inds_source], y[inds_target], a, b
 
         return jax.tree_util.Partial(
             match_pairs,
             ot_solver=ot_solver,
-            epsilon=epsilon,
             cost_fn=cost_fn,
             tau_a=tau_a,
             tau_b=tau_b,
@@ -498,11 +471,11 @@ class OTFlowMatching:
                     geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty, tau_a=tau_a, tau_b=tau_b
                     )
                 out = ot_solver(prob)
-
+            a, b = out.matrix.sum(axis=0), out.matrix.sum(axis=1)
             inds_source, inds_target = sample_conditional_indices_from_tmap(
-                key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x
+                key=key, tmat=out.matrix, k_samples_per_x=k_samples_per_x, left_marginals=a, is_balanced=(tau_a == 1.0) and (tau_b == 1.0)
             )
-            return x[inds_source], y[inds_target], out.matrix.sum(axis=0), out.matrix.sum(axis=1)
+            return x[inds_source], y[inds_target], a, b
 
         return jax.tree_util.Partial(
             match_pairs,
@@ -519,7 +492,7 @@ class OTFlowMatching:
         )
 
     def _get_match_latent_fn(self, ot_solver: Type[sinkhorn.Sinkhorn], epsilon: float, scale_cost: Any) -> Callable:
-        #@partial(jax.jit, static_argnames=["ot_solver", "epsilon", "scale_cost"])
+        @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "scale_cost"])
         def match_latent_to_data(
             key: jax.random.PRNGKeyArray,
             ot_solver: Type[was_solver.WassersteinSolver],
@@ -530,7 +503,7 @@ class OTFlowMatching:
         ) -> Tuple[jnp.ndarray, jnp.ndarray]:
             geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost)
             out = ot_solver(linear_problem.LinearProblem(geom))
-            inds_source, inds_target = sample_conditional_indices_from_tmap(key, out.matrix, 1)
+            inds_source, inds_target = sample_conditional_indices_from_tmap(key, out.matrix, 1, None, is_balanced=True)
             return x[inds_source], y[inds_target]
 
         return jax.tree_util.Partial(match_latent_to_data, ot_solver=ot_solver, epsilon=epsilon, scale_cost=scale_cost)
@@ -573,7 +546,7 @@ class OTFlowMatching:
             xi_predictions = apply_fn_xi({"params": params_xi}, x)
             return optax.l2_loss(xi_predictions, b).sum() + optax.l2_loss(xi_predictions.sum() - total_mass), xi_predictions
 
-        #@jax.jit
+        @jax.jit
         def step_fn(
             key: jax.random.PRNGKeyArray,
             state_neural_net: TrainState,
@@ -587,9 +560,6 @@ class OTFlowMatching:
             original_target_batch = batch["target"]
             source_batch, target_batch, a, b = self.match_fn(rng_match, batch["source"], batch["target"])
             rng_noise = jax.random.split(rng_noise, (len(target_batch)))
-            jax.debug.print("target batch shape {x}", x=target_batch.shape)
-            jax.debug.print("source batch shape {x}", x=source_batch.shape)
-            jax.debug.print("noise batch shape {x}", x=batch["noise"].shape)
             
             noise_matched, conditional_target = jax.vmap(self.match_latent_to_data_fn, 0, 0)(
                 key=rng_noise, x=batch["noise"], y=target_batch
