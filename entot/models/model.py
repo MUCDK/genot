@@ -56,7 +56,7 @@ def sample_conditional_indices_from_tmap(
         indices = jnp.arange(tmat.shape[0])
     tmat_adapted = tmat[indices]
     indices_per_row = jax.vmap(
-        lambda tmat_adapted: jax.random.choice(key=key, a=jnp.arange(tmat.shape[1]), p=tmat_adapted, shape=(k_samples_per_x,)),
+        lambda tmat_adapted: jax.random.choice(key=key, a=jnp.arange(tmat.shape[0]), p=tmat_adapted, shape=(k_samples_per_x,)),
         in_axes=0,
         out_axes=0,
     )(tmat_adapted)
