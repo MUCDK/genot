@@ -76,6 +76,7 @@ class OTFlowMatching:
         k_noise_per_x: int = 1,
         t_offset: float = 1e-5,
         epsilon: float = 1e-2,
+        beta: float = 0.0,
         cost_fn: Union[costs.CostFn, Literal["graph"]] = costs.SqEuclidean(),
         solver_latent_to_data: Optional[Type[was_solver.WassersteinSolver]] = None,
         latent_to_data_epsilon: float = 1e-2,
@@ -129,6 +130,9 @@ class OTFlowMatching:
             raise ValueError("Missing 'split_dim' for FGW.")
         self.fused_penalty = fused_penalty
         self.split_dim = split_dim
+
+        # Vae style parameters
+        self.beta = beta
 
         # OT latent-data matching parameters
         self.solver_latent_to_data = solver_latent_to_data
@@ -262,6 +266,7 @@ class OTFlowMatching:
                 batch,
                 self.state_eta,
                 self.state_xi,
+                self.beta,
             )
             for key, value in metrics.items():
                 self.metrics[key].append(value)
@@ -515,9 +520,10 @@ class OTFlowMatching:
             apply_fn_mlp: Callable,
             apply_fn_bridge: Callable,
             batch: Dict[str, jnp.array],
+            beta: float
         ):
             def phi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray, sig_0: Union[float, jnp.ndarray]) -> jnp.ndarray:
-                return sig_0 * (1-t) * x_0 + t * x_1
+                return (1-t) * x_0 + t * x_1
 
             def u_t(x_0: jnp.ndarray, x_1: jnp.ndarray) -> jnp.ndarray:
                 return x_1 - x_0
@@ -532,7 +538,7 @@ class OTFlowMatching:
             
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
-            return jnp.mean(optax.l2_loss(mlp_pred, d_psi))
+            return jnp.mean(optax.l2_loss(mlp_pred, d_psi))# - beta * 0.5 * jnp.sum(1. + jnp.log(sig_0**2) - mu_0**2. - sig_0**2)
 
         def loss_a_fn(
             params_eta: Optional[jnp.ndarray], apply_fn_eta: Optional[Callable], x: jnp.ndarray, a: jnp.ndarray, total_mass: float,
@@ -554,6 +560,7 @@ class OTFlowMatching:
             batch: Dict[str, jnp.array],
             state_eta: Optional[TrainState] = None,
             state_xi: Optional[TrainState] = None,
+            beta: float = 0.0,
         ):
             rng_match, rng_noise = jax.random.split(key, 2)
             original_source_batch = batch["source"]
@@ -576,6 +583,7 @@ class OTFlowMatching:
                 state_neural_net.apply_fn,
                 state_bridge_net.apply_fn,
                 batch,
+                beta
             )
             metrics = {}
             metrics["loss"] = loss

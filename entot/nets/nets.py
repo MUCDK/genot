@@ -129,8 +129,7 @@ class Bridge_MLP_constant(ModelBase):
         optimizer: optax.OptState,
         input_dim: int,
     ) -> NeuralTrainState:
-        params = self.init(rng, jnp.ones((1, input_dim)))["params"]
-        return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
+        return train_state.TrainState.create(apply_fn=self.apply, params={}, tx=optimizer)
 
 
 class MLP_marginal(ModelBase):
