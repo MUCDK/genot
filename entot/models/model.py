@@ -522,15 +522,18 @@ class OTFlowMatching:
             batch: Dict[str, jnp.array],
             beta: float
         ):
-            def phi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray, sig_0: Union[float, jnp.ndarray]) -> jnp.ndarray:
+            def phi_t(x_0: jnp.ndarray, x_1: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
                 return (1-t) * x_0 + t * x_1
 
             def u_t(x_0: jnp.ndarray, x_1: jnp.ndarray) -> jnp.ndarray:
                 return x_1 - x_0
 
-            mu_0, sig_0 = apply_fn_bridge({"params": params_bridge_net}, condition=batch["source"])
-            mu_noisy = mu_0 + batch["noise"] * sig_0
-            phi_t_eval = phi_t(mu_noisy, batch["target"], batch["time"], sig_0)
+            mu_0, std_0 = apply_fn_bridge(
+                {"params": params_bridge_net}, 
+                condition=batch["source"]
+            )
+            mu_noisy = mu_0 + batch["noise"] * std_0
+            phi_t_eval = phi_t(mu_noisy, batch["target"], batch["time"])
             mlp_pred = apply_fn_mlp(
                 {"params": params_mlp}, t=batch["time"], latent=phi_t_eval, condition=batch["source"]
             )
@@ -538,7 +541,11 @@ class OTFlowMatching:
             
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
-            return jnp.mean(optax.l2_loss(mlp_pred, d_psi))# - beta * 0.5 * jnp.sum(1. + jnp.log(sig_0**2) - mu_0**2. - sig_0**2)
+            kl_reg =  0.5 * jnp.sum(
+                mu_0**2 + std_0**2
+                - 2 * jnp.log(std_0)
+            ) 
+            return jnp.mean(optax.l2_loss(mlp_pred, d_psi)) + beta * kl_reg
 
         def loss_a_fn(
             params_eta: Optional[jnp.ndarray], apply_fn_eta: Optional[Callable], x: jnp.ndarray, a: jnp.ndarray, total_mass: float,
@@ -639,16 +646,20 @@ class OTFlowMatching:
         return step_fn
 
     def transport(
-        self, source: jnp.array, seed: int = 0, diffeqsolve_kwargs: Dict[str, Any] = types.MappingProxyType({})
+        self, 
+        source: jnp.array, 
+        seed: int = 0, 
+        diffeqsolve_kwargs: Dict[str, Any] = types.MappingProxyType({})
     ) -> Union[jnp.array, diffrax.Solution]:
         diffeqsolve_kwargs = dict(diffeqsolve_kwargs)
         rng = jax.random.PRNGKey(seed)
         latent_shape = (len(source),)
         latent_batch = self.noise_fn(rng, shape=latent_shape)
-
-        mu_0, sig_0 = self.state_bridge_net.apply_fn({"params": self.state_bridge_net.params}, condition=source)
-
-        mu_noisy = mu_0 + latent_batch * sig_0
+        mu_0, std_0 = self.state_bridge_net.apply_fn(
+            {"params": self.state_bridge_net.params}, 
+            condition=source
+        )
+        mu_noisy = mu_0 + latent_batch * std_0
         apply_fn_partial = partial(self.state_neural_net.apply_fn, condition=source)
         solution = diffrax.diffeqsolve(
             diffrax.ODETerm(

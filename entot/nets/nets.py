@@ -95,12 +95,19 @@ class Bridge_MLP_full(ModelBase):
 
     @nn.compact
     def __call__(self, condition: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:  # noqa: D102
-        condition = Block(dim=self.condition_embed_dim, out_dim=self.condition_embed_dim, activation_fn=self.act_fn)(
-            condition
-        )
-        mu = Block(dim=self.condition_embed_dim, out_dim=self.output_dim)(condition)
-        log_var = Block(dim=self.condition_embed_dim, out_dim=self.output_dim)(condition)
-        return mu, jnp.sqrt(jnp.exp(log_var))
+        condition = jnp.atleast_2d(condition)
+        condition = Block(
+            dim=self.condition_embed_dim, 
+            out_dim=self.condition_embed_dim, 
+            activation_fn=self.act_fn
+        )(condition)
+        out = Block(
+            dim=self.condition_embed_dim, 
+            out_dim=2*self.output_dim  # :dim for mean and :dim for log_std
+        )(condition)
+        mean = out[:, self.output_dim:]
+        log_std = out[:, :self.output_dim]
+        return mean, jnp.exp(log_std)
 
     def create_train_state(
         self,
