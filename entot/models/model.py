@@ -111,8 +111,11 @@ class OTFlowMatching:
         self.bridge_net = bridge_net
         self.state_neural_net: Optional[TrainState] = None
         self.state_bridge_net: Optional[TrainState] = None
-        self.optimizer = optax.adamw(learning_rate=1e-4, weight_decay=1e-10) if optimizer is None else optimizer
-        self.noise_fn = jax.tree_util.Partial(
+        self.optimizer = (
+            optax.adamw(learning_rate=1e-4, weight_decay=1e-10) 
+            if optimizer is None else optimizer
+        )
+        self.noise_fn = self.noise_fn = jax.tree_util.Partial(
             jax.random.multivariate_normal, mean=jnp.zeros((output_dim,)), cov=jnp.diag(jnp.ones((output_dim,)))
         )
         self.input_dim = input_dim
@@ -157,14 +160,18 @@ class OTFlowMatching:
 
     def setup(self, **kwargs: Any) -> None:
         self.state_neural_net = self.neural_net.create_train_state(
-            self.rng, self.optimizer, self.input_dim, self.output_dim
+            self.rng, self.optimizer, self.input_dim
         )
-        self.state_bridge_net = self.bridge_net.create_train_state(self.rng, self.optimizer, self.input_dim)
+        self.state_bridge_net = self.bridge_net.create_train_state(
+            self.rng, self.optimizer, self.input_dim
+        )
 
         self.step_fn = self._get_step_fn()
         if self.solver_latent_to_data is not None:
             self.match_latent_to_data_fn = self._get_match_latent_fn(
-                self.solver_latent_to_data, self.latent_to_data_epsilon, self.latent_to_data_scale_cost
+                self.solver_latent_to_data, 
+                self.latent_to_data_epsilon, 
+                self.latent_to_data_scale_cost
             )
         else:
             self.match_latent_to_data_fn = lambda key, x, y, **_: (x, y)
@@ -211,25 +218,35 @@ class OTFlowMatching:
                 )
 
         if self.mlp_eta is not None:
-            opt_eta = kwargs["opt_eta"] if "opt_eta" in kwargs else optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
-            self.state_eta = self.mlp_eta.create_train_state(self.rng, opt_eta, self.input_dim)
+            opt_eta = (
+                kwargs["opt_eta"] if "opt_eta" in kwargs 
+                else optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
+            )
+            self.state_eta = self.mlp_eta.create_train_state(
+                self.rng, opt_eta, self.input_dim
+            )
         if self.mlp_xi is not None:
-            opt_xi = kwargs["opt_xi"] if "opt_xi" in kwargs else optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
-            self.state_xi = self.mlp_xi.create_train_state(self.rng, opt_xi, self.output_dim)
+            opt_xi = (
+                kwargs["opt_xi"] if "opt_xi" in kwargs 
+                else optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
+            )
+            self.state_xi = self.mlp_xi.create_train_state(
+                self.rng, opt_xi, self.output_dim
+            )
 
     def __call__(
         self,
         x: Union[jnp.array, collections.abc.Iterable],
         y: Union[jnp.array, collections.abc.Iterable],
-        batch_size_source: int,
-        batch_size_target: int,
+        batch_size_source: int = 1_024,
+        batch_size_target: int = 1_024,
     ) -> Any:
         if not hasattr(x, "shape"):
             x_loader = x
             x_load_fn = lambda x: x
         else:
             x_loader = iter(
-                tf.data.Dataset.from_tensor_slices(x).repeat().shuffle(buffer_size=10_000).batch(batch_size_source)
+                tf.data.Dataset.from_tensor_slices(x).repeat().shuffle(buffer_size=10_000, seed=0).batch(batch_size_source)
             )
             x_load_fn = tfds.as_numpy
         if not hasattr(y, "shape"):
@@ -237,7 +254,7 @@ class OTFlowMatching:
             y_load_fn = lambda x: x
         else:
             y_loader = iter(
-                tf.data.Dataset.from_tensor_slices(y).repeat().shuffle(buffer_size=10_000).batch(batch_size_target)
+                tf.data.Dataset.from_tensor_slices(y).repeat().shuffle(buffer_size=10_000, seed=0).batch(batch_size_target)
             )
             y_load_fn = tfds.as_numpy
 
@@ -250,7 +267,10 @@ class OTFlowMatching:
             n_samples = len(source_batch) * self.k_noise_per_x
             t = (jax.random.uniform(rng_time, (1,)) + jnp.arange(n_samples) / n_samples) % (1 - self.t_offset)
             batch["time"] = t[:, None]
-            batch["noise"] = self.noise_fn(rng_noise, shape=(len(source_batch), self.k_noise_per_x))
+            batch["noise"] = self.noise_fn(
+                rng_noise, 
+                shape=(len(source_batch), self.k_noise_per_x)
+            )
             (
                 metrics,
                 self.state_neural_net,
@@ -542,7 +562,8 @@ class OTFlowMatching:
             if len(mlp_pred.shape) == 1:
                 mlp_pred = mlp_pred[:, None]
             kl_reg =  0.5 * jnp.sum(
-                mu_0**2 + std_0**2
+                + mu_0**2 
+                + std_0**2
                 - 2 * jnp.log(std_0)
             ) 
             return jnp.mean(optax.l2_loss(mlp_pred, d_psi)) + beta * kl_reg
@@ -660,10 +681,16 @@ class OTFlowMatching:
             condition=source
         )
         mu_noisy = mu_0 + latent_batch * std_0
-        apply_fn_partial = partial(self.state_neural_net.apply_fn, condition=source)
+        apply_fn_partial = partial(
+            self.state_neural_net.apply_fn, condition=source
+        )
         solution = diffrax.diffeqsolve(
             diffrax.ODETerm(
-                lambda t, y, *args: apply_fn_partial({"params": self.state_neural_net.params}, t=t, latent=y)
+                lambda t, y, *args: apply_fn_partial(
+                    {"params": self.state_neural_net.params}, 
+                    t=t, 
+                    latent=y
+                )
             ),
             diffeqsolve_kwargs.pop("solver", diffrax.Tsit5()),
             t0=0,

@@ -52,7 +52,7 @@ source = MixtureNormalSampler(
 )
 target = MixtureNormalSampler(
     jax.random.PRNGKey(1), 
-    [-3., 3.], 1,  0.1, 
+    [-1.5, 1.5], 1,  0.1, 
     batch_size=1024
 )
 
@@ -93,15 +93,15 @@ neural_net = MLP_vector_field(
     1, 128, 128, 128, 
     n_frequencies=10
 ) # this was 10
-bridge_net = Bridge_MLP_full(
-    1, 128, 128, 128
-)
+# bridge_net = Bridge_MLP_full(
+#     1, 128, 128, 128
+# )
 # bridge_net = Bridge_MLP_mean(
 #     1, 128, 128, 128
 # )
-# bridge_net = Bridge_MLP_constant(
-#     1, 128, 128, 128
-# )
+bridge_net = Bridge_MLP_constant(
+    1, 128, 128, 128
+)
 
 # output_dim = 1
 # params = bridge_net.init(
@@ -128,7 +128,7 @@ ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn(
 )
 otfm = OTFlowMatching(
     neural_net, 
-    beta=.01, 
+    beta=0., #.01, 
     bridge_net=bridge_net, 
     ot_solver=ot_solver, 
     epsilon=epsilon, 
@@ -164,13 +164,13 @@ res, _ , _= otfm.transport(
     seed=0, 
     diffeqsolve_kwargs={"max_steps": 10_000}
 )
-sns.kdeplot(res[0,...])
+sns.kdeplot(res[0,...]);
 
 # %%
 
 source_repeat = jnp.ones((1,)) * 0.0
 source_repeat = jnp.repeat(source_repeat, 20)[:, None]
-ts = np.linspace(0,1,20)
+ts = np.linspace(0, 1, 20)
 saveat=diffrax.SaveAt(ts=ts)
 res, sol, _ = otfm.transport(
     source_repeat, seed=0, diffeqsolve_kwargs={"saveat": saveat}
@@ -183,7 +183,7 @@ t_augmented = np.tile(ts[:, None], (1, tracks.shape[-1]))[:-1, ...]
 plt.quiver(t_augmented, tracks[:-1], t_vector, y_vector, angles="xy", scale=3)#,  headwidth=5, headlength=2, headaxislength=5)
 plt.xlabel("Time")
 plt.ylabel("Target space")
-plt.title(f"Sampled paths, $\epsilon={epsilon}$")
+plt.title(f"Sampled paths, $\epsilon={epsilon}$");
 
 # %%
 
