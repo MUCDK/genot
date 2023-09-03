@@ -6,7 +6,7 @@
 import os
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 import sys
 sys.path.append('..')
@@ -27,7 +27,8 @@ from entot.models.model import OTFlowMatching
 from entot.nets.nets import MLP_vector_field, MLP_bridge
 from entot.plotting.plots import plot_1D_balanced
 from entot.data.distributions import (
-    Gaussian, GaussianMixture, 
+    Gaussian, 
+    GaussianMixture, 
     SklearnDistribution
 )
 from typing import Any, Mapping, Optional
@@ -172,28 +173,12 @@ def sinkhorn_div(
 # %%
 
 source = SklearnDistribution(
-    name="swiss",
-    noise=.6,
-    scale=.1,
-    translation=jnp.array([0, 2.5])
+    name="moon_upper",
+    noise=.05
 )
-# source = GaussianMixture(
-#     means = jnp.array(
-#         [
-#             [-2, 0], 
-#             [0, 0],
-#             [2, 0]
-#         ]
-#     ),
-#     covs = jnp.tile(
-#         .05*jnp.eye(2), (3, 1, 1)
-#     )
-# )
 target = SklearnDistribution(
-    name="s_curve",
-    noise=.1,
-    scale=.8,
-    # translation=jnp.array([0, 2])
+    name="moon_lower",
+    noise=.05
 )
 source, target = iter(source), iter(target)
 
@@ -212,7 +197,6 @@ eval_batch = {
 }
 plot_batch(
     batch=eval_batch,
-    set_equal_axis=True
 )
 
 # %%
@@ -259,6 +243,7 @@ vector_field_net = MLP_vector_field(
 #         value=1., start=25
 #     )
 # )
+
 
 # iterations = 10_000
 # beta = 0.
@@ -326,8 +311,8 @@ for i, bridge_type in enumerate(list_bridge_type):
     #     0. if bridge_type in ["mean", "constant"] 
     #     else .1
     # )
-    beta = .1
-    epsilon = 1e-1
+    beta = 0.
+    epsilon = 1e-2
     iterations = 10_000
     ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn(
         momentum=ott.solvers.linear.acceleration.Momentum(
