@@ -170,6 +170,7 @@ def sinkhorn_div(
         **kwargs,
     ).divergence
 
+
 # %%
 
 source = SklearnDistribution(

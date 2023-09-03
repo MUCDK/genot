@@ -1,0 +1,1 @@
+{"train_tot_loss": 614.5579833984375, "_timestamp": 1693777949.7396495, "_runtime": 1254.9553685188293, "_step": 27, "train_fm_loss": 0.15665297210216522, "train_kl_reg": 6144.0126953125, "sinkorn_divergence": 3.3570799827575684, "_wandb": {"runtime": 1344}}

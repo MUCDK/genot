@@ -226,7 +226,7 @@ from entot.nets.nets import (
 output_dim, input_dim = 2, 2
 latent_embed_dim = 256
 n_frequencies = 128
-num_layers = 4
+num_layers = 5
 vector_field_net = MLP_vector_field(
     output_dim=output_dim, 
     latent_embed_dim=latent_embed_dim, 
@@ -240,68 +240,108 @@ vector_field_net = MLP_vector_field(
 
 # %%
 
-# from entot.nets.nets import (
-#     MLP_bridge,
-# )
+from entot.nets.nets import (
+    MLP_bridge,
+)
 
-# hidden_dim = 128
-# bridge_type = "mean"
-# bridge_net = MLP_bridge(
-#     output_dim=output_dim,
-#     hidden_dim=hidden_dim,
-#     bridge_type=bridge_type,
-#     num_layers=num_layers
-# )
+hidden_dim = latent_embed_dim
+bridge_type = "full"
+bridge_net = MLP_bridge(
+    output_dim=output_dim,
+    hidden_dim=hidden_dim,
+    bridge_type=bridge_type,
+    num_layers=num_layers
+)
 
-# epsilon = 1e-2
-# ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn(
-#     momentum=ott.solvers.linear.acceleration.Momentum(
-#         value=1., start=25
-#     )
-# )
+epsilon = 1e-1
+ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn(
+    momentum=ott.solvers.linear.acceleration.Momentum(
+        value=1., start=25
+    )
+)
 
-# iterations = 10_000
-# beta = 0.
-# otfm = OTFlowMatching(
-#     neural_net=vector_field_net, 
-#     bridge_net=bridge_net, 
-#     beta=beta, 
-#     ot_solver=ot_solver, 
-#     epsilon=epsilon, 
-#     input_dim=input_dim, 
-#     output_dim=output_dim, 
-#     iterations=iterations, 
-# )
-# otfm(
-#     x=source, 
-#     y=target, 
-# )
+list_beta = [
+    0.,
+    1.,
+    .1, 
+    .01,
+    .001
+]
+for i, beta in enumerate(list_beta):
+    
+    print(
+        f"beta = {beta}: in progress..."
+    )
+    
+    iterations = 10_000
+    list_sink_div = []
+    for _ in range(5):
+        list_sink_div.append([])
+    for seed in range(5):
+        
+        print(
+            f"beta = {beta}: seed {seed}"
+        )
+        otfm = OTFlowMatching(
+            neural_net=vector_field_net, 
+            bridge_net=bridge_net, 
+            beta=beta, 
+            ot_solver=ot_solver, 
+            epsilon=epsilon, 
+            input_dim=input_dim, 
+            output_dim=output_dim, 
+            iterations=iterations, 
+            seed=seed
+        )
+        otfm(
+            x=source, 
+            y=target, 
+        )
 
-# # plot loss 
-# fig, ax = plt.subplots(figsize=(8, 6))
-# ax.plot(
-#     np.arange(len(otfm.metrics["loss"])), 
-#     otfm.metrics["loss"],   
-# ) 
-# ax.set_yscale("log")
-# ax.set_title(
-#     "loss throughout iterations in log-scale",
-#     fontsize=20
-# )
-# plt.show()
+        # plot loss 
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(
+            np.arange(len(otfm.metrics["loss"])), 
+            otfm.metrics["loss"],   
+        ) 
+        ax.set_yscale("log")
+        ax.set_title(
+            "loss throughout iterations in log-scale",
+            fontsize=20
+        )
+        plt.show()
+        plt.close()
 
-# # transport and plot the samples
-# mapped_source_samples, _ , _= otfm.transport(
-#     eval_batch["source"], 
-#     seed=0, 
-#     diffeqsolve_kwargs={"max_steps": 10_000}
-# )
-# eval_batch["mapped_source"] = jnp.squeeze(mapped_source_samples)
-# plot_batch(
-#     batch=eval_batch,
-#     compute_sinkhorn_div=True,
-#     epsilon=1e-1
-# )
+        # transport and plot the samples
+        mapped_source_samples, _ , _= otfm.transport(
+            eval_batch["source"], 
+            seed=0, 
+            diffeqsolve_kwargs={"max_steps": 10_000}
+        )
+        eval_batch["mapped_source"] = jnp.squeeze(mapped_source_samples)
+        plot_batch(
+            batch=eval_batch,
+            compute_sinkhorn_div=True,
+            epsilon=1e-1
+        )
+        
+        sinkhorn_div_value = sinkhorn_div(
+            samples=eval_batch['target'],
+            mapped_samples=eval_batch['mapped_source'],
+            epsilon=1e-1
+        )
+        list_sink_div[seed].append(sinkhorn_div_value)
+    
+    print(
+        f"beta = {beta}: done!"
+    )
+
+for beta in list_beta:    
+    print(
+        f'beta={beta}: '
+        f'mean={np.mean(list_sink_div[beta]):.6f}, '
+        f'std={np.std(list_sink_div[beta]):.6f}'
+    )
 
 # %%
 
@@ -322,11 +362,11 @@ for i, bridge_type in enumerate(list_bridge_type):
         bridge_type=bridge_type,
         num_layers=num_layers
     )
-    # beta = (
-    #     0. if bridge_type in ["mean", "constant"] 
-    #     else .1
-    # )
-    beta = .1
+    beta = (
+        0. if bridge_type in ["mean", "constant"] 
+        else .1
+    )
+    # beta = .1
     epsilon = 1e-1
     iterations = 10_000
     ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn(

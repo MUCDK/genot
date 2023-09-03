@@ -1,0 +1,7 @@
+data:
+  drug_name: "cisplatin"
+model:
+  epsilon: 0.01
+  beta: 0.
+  bridge_type: "constant"
+  
