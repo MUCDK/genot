@@ -35,7 +35,7 @@ def set_directory(path: Path):
 def get_argv(
     drug_name: str,
     drug_setting: Literal["4i", "scRNAseq"],
-    where: Literal["data_space", "latent_space"]
+    where: Literal["data_space", "latent_space"],
 ) -> Sequence[str]:
     """Get the argv str associated to the bash command provided 
     in the scripts/submit file, to load dataset associated to drug: 
@@ -94,7 +94,8 @@ def get_argv(
 def get_config(
     drug_name: str,
     drug_setting: Literal["4i", "scRNAseq"],
-    where: Literal["data_space", "latent_space"]
+    where: Literal["data_space", "latent_space"],
+    cellot_path: Path = Path("cellot"),
 ) -> Any:
     """Load the config associated to the dataset corresponding to drug: 
     ``drug_name`.
@@ -118,7 +119,7 @@ def get_config(
     )
 
     # go in the cellot directory via context manager
-    with set_directory(Path("../cellot")):
+    with set_directory(cellot_path):
 
         # cellot files to load and prepare data
         from cellot.train.experiment import prepare
@@ -139,7 +140,8 @@ def get_config(
 def load_iterator(
     drug_name: str,
     drug_setting: Literal["4i", "scRNAseq"],
-    where: Literal["data_space", "latent_space"]
+    where: Literal["data_space", "latent_space"],
+    cellot_path: Path = Path("cellot"),
 ) -> Dict[str, Iterator]:
     """
     Load dict of the 4 iterators asociated to drug: ``drug_name``;
@@ -166,7 +168,7 @@ def load_iterator(
     )
 
     # go in the cellot directory via context manager
-    with set_directory(Path("../cellot")):
+    with set_directory(cellot_path):
 
         # cellot files to load and prepare data
         from cellot.utils.loaders import load
@@ -190,6 +192,7 @@ def load_iterator(
 
 def load_encode_decode(
     drug_name: str,
+    cellot_path: Path = Path("cellot"),
 ) -> Sequence[Callable]:
     """Load encoder and decoder functions of the autoencoder model 
     trained for drug `drug_name`, in scRNAseq setting.
@@ -208,7 +211,7 @@ def load_encode_decode(
         where="latent_space"
     )
     # go in the cellot directory via context manager
-    with set_directory(Path("../cellot")):
+    with set_directory(cellot_path):
 
         # cellot files to load and prepare data
         from cellot.utils.loaders import load
@@ -251,7 +254,8 @@ def load_encode_decode(
 def load_dataset(
     drug_name: str,
     drug_setting: Literal["4i", "scRNAseq"],
-    where: Literal["data_space", "latent_space"]
+    where: Literal["data_space", "latent_space"],
+    cellot_path: Path = Path("cellot"),
 ) -> AnnDataDataset:
     """
     Load andata dataset associated to drug: ``drug_name``.
@@ -275,7 +279,7 @@ def load_dataset(
         where=where
     )
 
-    with set_directory(Path("../cellot")):
+    with set_directory(cellot_path):
 
         from cellot.utils.evaluate import load_data
         from cellot.train.experiment import prepare

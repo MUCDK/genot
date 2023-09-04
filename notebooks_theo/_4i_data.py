@@ -38,7 +38,7 @@ from ott.tools import sinkhorn_divergence
 from ott.solvers.linear import acceleration
 from types import MappingProxyType
 from entot.data import utils_cellot
-
+import optax
 
 # %%
     
@@ -62,6 +62,7 @@ sinkhorn_div_fn = jax.tree_util.Partial(
     sinkhorn_div, 
     epsilon=1e-1,
 )
+
 
 # %%
 
@@ -100,6 +101,7 @@ from entot.nets.nets import MLP_vector_field
 
 
 # vector field network
+# vector field network
 x_train = jnp.array(full_dataset.train.source.adata.to_df().values)
 y_train = jnp.array(full_dataset.train.target.adata.to_df().values)
 input_dim = x_train.shape[1]
@@ -115,7 +117,7 @@ vector_field_net = MLP_vector_field(
 ) 
 
 # bridge newtork
-bridge_type = "mean"
+bridge_type = "constant"
 hidden_dim = latent_embed_dim
 bridge_net = MLP_bridge(
     output_dim=output_dim,
@@ -124,12 +126,16 @@ bridge_net = MLP_bridge(
     num_layers=num_layers
 )
 beta = 0.
-epsilon = 1e-2
-iterations = 10_000
+epsilon = 1e-1
+iterations = 20_000
 ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn(
     momentum=ott.solvers.linear.acceleration.Momentum(
         value=1., start=25
     )
+)
+optimizer = optax.adamw(
+    learning_rate=1e-3,
+    # weight_decay=1e-4
 )
 otfm = OTFlowMatching_(
     vector_field_net,
@@ -144,7 +150,8 @@ otfm = OTFlowMatching_(
     eval_batch=eval_batch,
     logging=True,
     log_freq=1_000,
-    sink_div_fn=sinkhorn_div_fn
+    sink_div_fn=sinkhorn_div_fn,
+    optimizer=optimizer
 )
 
 # %%

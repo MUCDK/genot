@@ -775,7 +775,7 @@ class OTFlowMatching_:
         config_wandb: Optional[dict] = None,
         list_eval_metrics: Optional[List[Callable]] = None,
         sink_div_fn: Optional[Callable[[jnp.ndarray, jnp.ndarray], float]] = None,
-        eval_batch: Optional[Dict[str, jnp.ndarray]] = None,
+        test_batch: Optional[Dict[str, jnp.ndarray]] = None,
         logging: bool = True,
         log_freq: int = 1_000,
         seed: int = 0,
@@ -849,7 +849,7 @@ class OTFlowMatching_:
             self.config_wandb = config_wandb
         self.list_eval_metrics = list_eval_metrics
         self.sink_div_fn = sink_div_fn
-        self.eval_batch = eval_batch
+        self.test_batch = test_batch
         self.logging = logging
         self.log_freq = log_freq
 
@@ -1040,7 +1040,7 @@ class OTFlowMatching_:
                     
                     # transport test samples
                     mapped_source_samples, _ , _= self.transport(
-                        self.eval_batch["source"], 
+                        self.test_batch["source"], 
                         seed=0, 
                         diffeqsolve_kwargs={"max_steps": 10_000}
                     )
@@ -1048,7 +1048,7 @@ class OTFlowMatching_:
                     # compute sinkhorn divergence
                     sink_div_val = self.sink_div_fn(
                         jnp.squeeze(mapped_source_samples),
-                        self.eval_batch["target"],
+                        self.test_batch["target"],
                     )
                     
                     # log to wandb

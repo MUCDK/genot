@@ -6,7 +6,7 @@
 import os
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import sys
 sys.path.append('..')
@@ -38,7 +38,7 @@ from ott.tools import sinkhorn_divergence
 from ott.solvers.linear import acceleration
 from types import MappingProxyType
 from entot.data import utils_cellot
-
+import optax
 
 # %%
     
@@ -58,9 +58,11 @@ def sinkhorn_div(
         sinkhorn_kwargs=sinkhorn_kwargs,
         **kwargs,
     ).divergence
-sinkhorn_div_fn = jax.tree_util.Partial(
-    sinkhorn_div, 
-    epsilon=1e-1,
+sinkhorn_div_fn = jax.jit(
+    jax.tree_util.Partial(
+        sinkhorn_div, 
+        epsilon=1e-1,
+    )
 )
 
 # %%
@@ -124,12 +126,16 @@ bridge_net = MLP_bridge(
     num_layers=num_layers
 )
 beta = 0.
-epsilon = 1e-2
-iterations = 10_000
+epsilon = 1e-1
+iterations = 30_000
 ot_solver = ott.solvers.linear.sinkhorn.Sinkhorn(
     momentum=ott.solvers.linear.acceleration.Momentum(
         value=1., start=25
     )
+)
+optimizer = optax.adamw(
+    learning_rate=1e-3,
+    # weight_decay=1e-4
 )
 otfm = OTFlowMatching_(
     vector_field_net,
@@ -144,7 +150,8 @@ otfm = OTFlowMatching_(
     eval_batch=eval_batch,
     logging=True,
     log_freq=1_000,
-    sink_div_fn=sinkhorn_div_fn
+    sink_div_fn=sinkhorn_div_fn,
+    optimizer=optimizer
 )
 
 # %%
