@@ -1,0 +1,90 @@
+wandb_version: 1
+
+data:
+  desc: null
+  value:
+    drug_name: cisplatin
+    drug_setting: 4i
+    where: data_space
+model:
+  desc: null
+  value:
+    epsilon: 0.1
+    vector_field:
+      num_layers: 2
+      latent_embed_dim: 256
+      condition_embed_dim: 256
+      t_embed_dim: 256
+      joint_hidden_dim: 256
+      n_frequencies: 128
+      act_fn: silu
+    bridge:
+      bridge_type: constant
+      num_layers: 4
+      hidden_dim: 256
+      act_fn: silu
+      beta: 0.0
+    ot_solver:
+      threshold: 0.001
+      momentum:
+        value: 1.0
+        start: 25
+optim:
+  desc: null
+  value:
+    learning_rate: 0.001
+    weight_decay: 1.0e-05
+    batch_size_source: 1024
+    batch_size_target: 1024
+    num_iterations: 20000
+callback:
+  desc: null
+  value:
+    use_callback: true
+    callback_freq: 1000
+    kwargs:
+      epsilon: 0.1
+      num_sample_conditional: 10
+      seed: 0
+    log_wandb: true
+_wandb:
+  desc: null
+  value:
+    python_version: 3.10.10
+    cli_version: 0.14.2
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1694012009.844355
+    t:
+      1:
+      - 1
+      - 2
+      - 3
+      - 5
+      - 12
+      - 45
+      - 50
+      - 53
+      - 55
+      2:
+      - 1
+      - 2
+      - 3
+      - 5
+      - 12
+      - 45
+      - 50
+      - 53
+      - 55
+      3:
+      - 2
+      - 16
+      - 17
+      - 23
+      - 24
+      - 37
+      4: 3.10.10
+      5: 0.14.2
+      8:
+      - 5

@@ -1,0 +1,1 @@
+{"train_sinkorn_divergence": 2.242614269256592, "_timestamp": 1693998310.602391, "_runtime": 405.4056758880615, "_step": 11, "test_sinkhorn_divergence": 2.3701705932617188, "train_test_sinkhorn_divergence": 2.3701705932617188, "_wandb": {"runtime": 498}}

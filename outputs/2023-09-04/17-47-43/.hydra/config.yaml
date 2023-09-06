@@ -1,0 +1,32 @@
+project_dir: /home/theouscidda/genot
+data:
+  drug_name: cisplatin
+  drug_setting: 4i
+  where: data_space
+model:
+  epsilon: 0.1
+  vector_field:
+    num_layers: 4
+    latent_embed_dim: 256
+    n_frequencies: 128
+    act_fn: silu
+    init_scale: 0.01
+  bridge:
+    bridge_type: constant
+    num_layers: 4
+    hidden_dim: 256
+    act_fn: silu
+    beta: 0.0
+    init_scale: 1.0
+  ot_solver:
+    momentum:
+      value: 1.0
+      start: 10
+optim:
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  num_iterations: 20000
+logging:
+  logging: true
+  log_freq: 1000
+  log_wandb: true

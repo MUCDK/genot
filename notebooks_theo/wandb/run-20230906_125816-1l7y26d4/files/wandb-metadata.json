@@ -1,0 +1,213 @@
+{
+    "os": "Linux-3.10.0-1160.83.1.el7.x86_64-x86_64-with-glibc2.17",
+    "python": "3.10.10",
+    "heartbeatAt": "2023-09-06T10:58:27.178258",
+    "startedAt": "2023-09-06T10:58:16.444976",
+    "docker": null,
+    "cuda": null,
+    "args": null,
+    "state": "running",
+    "program": "/home/theouscidda/genot/notebooks_theo/4i_data.py",
+    "codePath": "notebooks_theo/4i_data.py",
+    "git": {
+        "remote": "https://github.com/MUCDK/genot",
+        "commit": "af2da93dd57a286259bf54854ac8bcaa7b36056c"
+    },
+    "email": "theo.uscidda@gmail.com",
+    "root": "/home/theouscidda/genot",
+    "host": "gpuserver.ensae.fr",
+    "username": "theouscidda",
+    "executable": "/home/theouscidda/mambaforge/envs/entot/bin/python",
+    "cpu_count": 24,
+    "cpu_count_logical": 24,
+    "cpu_freq": {
+        "current": 1366.18775,
+        "min": 1200.0,
+        "max": 3500.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 1290.71,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1211.059,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1497.985,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1294.189,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1296.386,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1259.033,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1281.738,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1199.89,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1294.372,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1199.89,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1248.596,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1199.89,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 2092.529,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1291.442,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 3487.976,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1287.414,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1486.999,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1210.693,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1224.792,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1200.073,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1199.89,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1291.809,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1213.623,
+            "min": 1200.0,
+            "max": 3500.0
+        },
+        {
+            "current": 1199.89,
+            "min": 1200.0,
+            "max": 3500.0
+        }
+    ],
+    "disk": {
+        "total": 49.9755859375,
+        "used": 29.582111358642578
+    },
+    "gpu": "NVIDIA Tesla K80",
+    "gpu_count": 13,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla P100-PCIE-16GB",
+            "memory_total": 17071734784
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla P100-PCIE-16GB",
+            "memory_total": 17071734784
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla P100-PCIE-16GB",
+            "memory_total": 17071734784
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        },
+        {
+            "name": "NVIDIA Tesla K80",
+            "memory_total": 11996954624
+        }
+    ],
+    "memory": {
+        "total": 125.64459991455078
+    }
+}

@@ -1,0 +1,1 @@
+{"train_fm_loss": 5.799018383026123, "_timestamp": 1694020205.7788577, "_runtime": 15.279101610183716, "_step": 2, "train_reg_kl": 25600.0, "train_tot_loss": 5.799018383026123, "_wandb": {"runtime": 53}}

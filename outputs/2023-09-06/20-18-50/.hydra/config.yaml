@@ -1,0 +1,39 @@
+data:
+  drug_name: cisplatin
+  drug_setting: 4i
+  where: data_space
+model:
+  epsilon: 0.1
+  vector_field:
+    num_layers: 2
+    latent_embed_dim: 256
+    condition_embed_dim: 256
+    t_embed_dim: 256
+    joint_hidden_dim: 256
+    n_frequencies: 128
+    act_fn: silu
+  bridge:
+    bridge_type: constant
+    num_layers: 4
+    hidden_dim: 256
+    act_fn: silu
+    beta: 0.0
+  ot_solver:
+    threshold: 0.001
+    momentum:
+      value: 1.0
+      start: 25
+optim:
+  learning_rate: 0.001
+  weight_decay: 1.0e-05
+  batch_size_source: 1024
+  batch_size_target: 1024
+  num_iterations: 20000
+callback:
+  use_callback: true
+  callback_freq: 1000
+  kwargs:
+    epsilon: 0.1
+    num_sample_conditional: 10
+    seed: 0
+  log_wandb: true
