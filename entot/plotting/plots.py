@@ -10,13 +10,13 @@ from IPython.display import clear_output, display
 
 
 def plot_1D_unbalanced(
-    source, target, target_predicted, eta_predictions, xi_predictions, epsilon, tau_a, tau_b, seed, **kwargs
+    source, target, target_predicted, eta_predictions, xi_predictions, epsilon, tau_a, tau_b, seed, figsize=(24, 16), dpi=150, **kwargs
 ):
     with jax.default_device(jax.devices("cpu")[0]):
-        fig, axes = plt.subplots(2, 5, figsize=(24, 16), dpi=150)
+        fig, axes = plt.subplots(2, 5, figsize=figsize, dpi=dpi)
 
         geom = ott.geometry.pointcloud.PointCloud(source, target_predicted, epsilon=epsilon, scale_cost=1.0)
-        out_pred = ott.solvers.linear.sinkhorn.Sinkhorn()(ott.problems.linear.linear_problem.LinearProblem(geom))
+        out_pred = ott.solvers.linear.sinkhorn.Sinkhorn()(ott.problems.linear.linear_problem.LinearProblem(geom, a=eta_predictions[:,0], b=xi_predictions[:,0]))
 
         geom = ott.geometry.pointcloud.PointCloud(source, target, epsilon=epsilon, scale_cost=1.0)
         out_true = ott.solvers.linear.sinkhorn.Sinkhorn()(
@@ -56,8 +56,9 @@ def plot_1D_unbalanced(
             ax=axes[0][0],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[0][0].set_title(r"$\mu$", fontsize=14)
-        axes[0][0].set_xlabel("Source")
+        #axes[0][0].set_title(r"$\mu$", fontsize=14)
+        axes[0][0].set_title("source")
+        axes[0][0].set(xlabel=None)
 
         # Plotting rescaled source distribution
         sns.kdeplot(
@@ -70,7 +71,8 @@ def plot_1D_unbalanced(
             ax=axes[0][1],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[0][1].set_title(r"$\eta(x) \cdot \mu$", fontsize=14)
+        axes[0][1].set_title("rescaled source, true")
+        #axes[0][1].set_title(r"$\eta(x) \cdot \mu$", fontsize=14)
 
         # Plotting learnt rescaled source distribution
         sns.kdeplot(
@@ -83,7 +85,8 @@ def plot_1D_unbalanced(
             ax=axes[0][2],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
-        axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mu$", fontsize=14)
+        axes[0][2].set_title("rescaled source, predicted")
+        #axes[0][2].set_title(r"$\hat{\eta}_{\theta}(x) \cdot \mu$", fontsize=14)
 
         # Plotting P_2#pi_hat(X,Y)
         sns.kdeplot(
@@ -95,8 +98,9 @@ def plot_1D_unbalanced(
             bw_adjust=kwargs.get("bw_adjust", 1.0),
             ax=axes[0][3],
         )
-        axes[0][3].set_title(r"$P_2\#\pi_{\theta}$", fontsize=14)
-        axes[0][3].set_ylabel("Mapped Source")
+        axes[0][3].set_title("predicted target, not rescaled")
+        #axes[0][3].set_title(r"$P_2\#\pi_{\theta}$", fontsize=14)
+
 
         # Plotting \hat{\eta}(x) * P_2#pi_hat(X,Z)
         sns.kdeplot(
@@ -109,7 +113,8 @@ def plot_1D_unbalanced(
             bw_adjust=kwargs.get("bw_adjust", 1.0),
             ax=axes[0][4],
         )
-        axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot P_2\#\pi_{\theta}$", fontsize=14)
+        axes[0][3].set_title(r"$\hat{\eta}_{\theta}(x) \cdot P_2\#\pi_{\theta}$", fontsize=14)
+        #axes[0][4].set_title(r"$\hat{\eta}_{\theta}(x) \cdot P_2\#\pi_{\theta}$", fontsize=14)
 
         # Plotting learnt plan pi_hat between learnt rescaled source and P_2#pi_hat(X,Z)
         joint_dist = jnp.concatenate((source, target_predicted), axis=1)
@@ -127,6 +132,8 @@ def plot_1D_unbalanced(
         axes[1][0].set_title(
             r"$\hat{\pi}_{\theta}(\hat{\eta}_{\theta}\cdot \mu, \hat{\xi}_{\theta}\cdot \nu)$", fontsize=14
         )
+        axes[1][0].set(xlabel=None)
+        axes[1][0].set(ylabel=None)
 
         # Plotting ground truth plan between learnt rescaled source and P_2#pi_hat(X,Y)
         pi_star_inds = jax.random.categorical(
@@ -138,22 +145,24 @@ def plot_1D_unbalanced(
             (
                 jnp.atleast_2d(source[inds_source]),
                 jnp.atleast_2d(target_predicted[inds_target]),
-                jnp.atleast_2d(eta_predictions[inds_source]),
+                #jnp.atleast_2d(eta_predictions[inds_source]* xi_predictions[inds_source]),
             ),
             axis=1,
         )
-        gt = pd.DataFrame(data=data, columns=["source", "mapped_source", "predicted_weights"])
+        gt = pd.DataFrame(data=data, columns=["source", "mapped_source"])#, "predicted_weights"])
         sns.kdeplot(
             data=gt,
             x="source",
             y="mapped_source",
-            weights="predicted_weights",
+            #weights="predicted_weights",
             color="black",
             alpha=1.0,
             ax=axes[1][1],
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
         axes[1][1].set_title(r"$\pi^*(\hat{\eta}_{\theta}\cdot \mu, \hat{\xi}_{\theta}\cdot \nu)$", fontsize=14)
+        axes[1][1].set(xlabel=None)
+        axes[1][1].set(ylabel=None)
 
         # Plotting rescaled target distribution
         df = pd.DataFrame(data=np.concatenate((target, b_true[:, None]), axis=1), columns=["target", "weights"])
@@ -169,6 +178,7 @@ def plot_1D_unbalanced(
             bw_adjust=kwargs.get("bw_adjust", 1.0),
         )
         axes[1][2].set_title(r"$\xi(y) \cdot \nu$", fontsize=14)
+        axes[1][2].set(ylabel=None)
 
         # Plotting rescaled learnt target distribution
         sns.kdeplot(

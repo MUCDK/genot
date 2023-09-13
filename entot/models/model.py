@@ -57,7 +57,7 @@ def sample_conditional_indices_from_tmap(
         indices = jnp.arange(tmat.shape[0])
     tmat_adapted = tmat[indices]
     indices_per_row = jax.vmap(
-        lambda tmat_adapted: jax.random.choice(key=key, a=jnp.arange(tmat.shape[0]), p=tmat_adapted, shape=(k_samples_per_x,)),
+        lambda tmat_adapted: jax.random.choice(key=key, a=jnp.arange(tmat.shape[1]), p=tmat_adapted, shape=(k_samples_per_x,)),
         in_axes=0,
         out_axes=0,
     )(tmat_adapted)
@@ -67,7 +67,7 @@ def sample_conditional_indices_from_tmap(
 class OTFlowMatching:
     def __init__(
         self,
-        neural_net: Type[ModelBase],
+        neural_net: Union[Type[ModelBase], Tuple[Type[ModelBase], Type[ModelBase]]],
         bridge_net: Type[ModelBase],
         input_dim: int,
         output_dim: int,
@@ -104,6 +104,7 @@ class OTFlowMatching:
 
         # setup parameters
         self.rng = jax.random.PRNGKey(seed)
+        self.seed = seed
         self.iterations = iterations
         self.metrics = {"loss": [], "loss_eta": [], "loss_xi": []}
 
@@ -253,7 +254,7 @@ class OTFlowMatching:
             )
             x_loader = iter(
                 tf.data.Dataset.from_tensor_slices(x).repeat().shuffle(
-                    buffer_size=10_000, seed=0
+                    buffer_size=10_000, seed=self.seed
                 ).batch(batch_size_source)
             )
             x_load_fn = tfds.as_numpy
@@ -266,7 +267,7 @@ class OTFlowMatching:
             )
             y_loader = iter(
                 tf.data.Dataset.from_tensor_slices(y).repeat().shuffle(
-                    buffer_size=10_000, seed=0
+                    buffer_size=10_000, seed=self.seed
                 ).batch(batch_size_target)
             )
             y_load_fn = tfds.as_numpy
@@ -469,7 +470,7 @@ class OTFlowMatching:
             adj_matrix = a.at[
                 jnp.repeat(jnp.arange(len(X) + len(Y)), repeats=k_neighbors).flatten(), indices.flatten()
             ].set(distances.flatten())
-            return graph.Graph.from_graph(adj_matrix[:len(X), len(X):], normalize=kwargs.pop("normalize", True), **kwargs).cost_matrix
+            return graph.Graph.from_graph(adj_matrix, normalize=kwargs.pop("normalize", True), **kwargs).cost_matrix[:len(X), len(X):]
 
         @partial(
             jax.jit,
@@ -575,6 +576,7 @@ class OTFlowMatching:
                 condition=batch["source"]
             )
             mu_noisy = mu_0 + batch["noise"] * std_0
+
             phi_t_eval = phi_t(mu_noisy, batch["target"], batch["time"])
             mlp_pred = apply_fn_mlp(
                 {"params": params_mlp}, t=batch["time"], latent=phi_t_eval, condition=batch["source"]
@@ -591,16 +593,16 @@ class OTFlowMatching:
             return jnp.mean(optax.l2_loss(mlp_pred, d_psi)) + beta * kl_reg
 
         def loss_a_fn(
-            params_eta: Optional[jnp.ndarray], apply_fn_eta: Optional[Callable], x: jnp.ndarray, a: jnp.ndarray, total_mass: float,
+            params_eta: Optional[jnp.ndarray], apply_fn_eta: Optional[Callable], x: jnp.ndarray, a: jnp.ndarray, expectation_reweighting: float,
         ) -> float:
             eta_predictions = apply_fn_eta({"params": params_eta}, x)
-            return optax.l2_loss(eta_predictions[:, 0], a).sum() + optax.l2_loss(eta_predictions.sum() - total_mass), eta_predictions
+            return optax.l2_loss(eta_predictions[:, 0], a).mean() + optax.l2_loss(jnp.mean(eta_predictions) - expectation_reweighting), eta_predictions
 
         def loss_b_fn(
-            params_xi: Optional[jnp.ndarray], apply_fn_xi: Optional[Callable], x: jnp.ndarray, b: jnp.ndarray, total_mass: float
+            params_xi: Optional[jnp.ndarray], apply_fn_xi: Optional[Callable], x: jnp.ndarray, b: jnp.ndarray, expectation_reweighting: float
         ) -> float:
             xi_predictions = apply_fn_xi({"params": params_xi}, x)
-            return optax.l2_loss(xi_predictions, b).sum() + optax.l2_loss(xi_predictions.sum() - total_mass), xi_predictions
+            return optax.l2_loss(xi_predictions, b).mean() + optax.l2_loss(jnp.mean(xi_predictions) - expectation_reweighting), xi_predictions
 
         @jax.jit
         def step_fn(
@@ -1204,7 +1206,7 @@ class OTFlowMatching_:
             adj_matrix = a.at[
                 jnp.repeat(jnp.arange(len(X) + len(Y)), repeats=k_neighbors).flatten(), indices.flatten()
             ].set(distances.flatten())
-            return graph.Graph.from_graph(adj_matrix[:len(X), len(X):], normalize=kwargs.pop("normalize", True), **kwargs).cost_matrix
+            return graph.Graph.from_graph(adj_matrix, normalize=kwargs.pop("normalize", True), **kwargs).cost_matrix[:len(X), len(X):]
 
         @partial(
             jax.jit,
@@ -1328,16 +1330,16 @@ class OTFlowMatching_:
             return tot_loss, (fm_loss, reg_kl)
 
         def loss_a_fn(
-            params_eta: Optional[jnp.ndarray], apply_fn_eta: Optional[Callable], x: jnp.ndarray, a: jnp.ndarray, total_mass: float,
+            params_eta: Optional[jnp.ndarray], apply_fn_eta: Optional[Callable], x: jnp.ndarray, a: jnp.ndarray, expectation_reweighting: float,
         ) -> float:
             eta_predictions = apply_fn_eta({"params": params_eta}, x)
-            return optax.l2_loss(eta_predictions[:, 0], a).sum() + optax.l2_loss(eta_predictions.sum() - total_mass), eta_predictions
+            return optax.l2_loss(eta_predictions[:, 0], a).mean() + optax.l2_loss(jnp.mean(eta_predictions) - expectation_reweighting), eta_predictions
 
         def loss_b_fn(
-            params_xi: Optional[jnp.ndarray], apply_fn_xi: Optional[Callable], x: jnp.ndarray, b: jnp.ndarray, total_mass: float
+            params_xi: Optional[jnp.ndarray], apply_fn_xi: Optional[Callable], x: jnp.ndarray, b: jnp.ndarray, expectation_reweighting: float
         ) -> float:
             xi_predictions = apply_fn_xi({"params": params_xi}, x)
-            return optax.l2_loss(xi_predictions, b).sum() + optax.l2_loss(xi_predictions.sum() - total_mass), xi_predictions
+            return optax.l2_loss(xi_predictions, b).mean() + optax.l2_loss(jnp.mean(xi_predictions) - expectation_reweighting), xi_predictions
 
         @jax.jit
         def step_fn(
