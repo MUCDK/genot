@@ -271,16 +271,7 @@ class OTFlowMatching:
                 ).batch(batch_size_target)
             )
             y_load_fn = tfds.as_numpy
-            
-        # setup wandb
-        # if self.logging and self.log_wandb:
-        #     wandb.init(
-        #         project=self.name_project_wandb,
-        #         config=self.config_wandb
-        #     )
-        #     if self.name_run_wandb is not None:
-        #         wandb.run.name = self.name_run_wandb
-
+           
         batch: Dict[str, jnp.array] = {}
         for step in tqdm(range(self.iterations)):
             source_batch, target_batch = x_load_fn(next(x_loader)), y_load_fn(next(y_loader))
@@ -640,15 +631,8 @@ class OTFlowMatching:
             metrics = {}
             metrics["loss"] = loss
             
-            if state_eta is not None:
-                integration_eta = jnp.mean(state_eta.apply_fn({"params": state_eta.params}, original_source_batch))
-            else:
-                integration_eta = 1.0
-            
-            if state_xi is not None:
-                integration_xi = jnp.mean(state_xi.apply_fn({"params": state_xi.params}, original_target_batch))
-            else:
-                integration_xi = 1.0
+            integration_eta = jnp.sum(a)
+            integration_xi = jnp.sum(b)
 
             if state_eta is not None:
                 grad_a_fn = jax.value_and_grad(loss_a_fn, argnums=0, has_aux=True)
@@ -659,6 +643,7 @@ class OTFlowMatching:
                     a * len(original_source_batch),
                     integration_xi,
                 )
+       
                 new_state_eta = state_eta.apply_gradients(grads=grads_eta)
                 metrics["loss_eta"] = loss_a
 
@@ -1379,15 +1364,10 @@ class OTFlowMatching_:
             metrics["fm_loss"] = fm_loss
             metrics["reg_kl"] = reg_kl
             
-            if state_eta is not None:
-                integration_eta = jnp.mean(state_eta.apply_fn({"params": state_eta.params}, original_source_batch))
-            else:
-                integration_eta = 1.0
             
-            if state_xi is not None:
-                integration_xi = jnp.mean(state_xi.apply_fn({"params": state_xi.params}, original_target_batch))
-            else:
-                integration_xi = 1.0
+            integration_eta = jnp.sum(a)
+            integration_xi = jnp.sum(b)
+            
 
             if state_eta is not None:
                 grad_a_fn = jax.value_and_grad(loss_a_fn, argnums=0, has_aux=True)
