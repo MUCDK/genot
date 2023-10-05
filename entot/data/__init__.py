@@ -1,1 +1,1 @@
-from entot.data import data
+from entot.data import data, distributions_new

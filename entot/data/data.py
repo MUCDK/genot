@@ -58,9 +58,14 @@ class DataLoader(BaseSampler):
 
 class MixtureNormalSampler(BaseSampler):
     def __init__(
-        self, rng: jax.random.KeyArray, centers: Iterable[int], dim: int, std: float = 1.0, batch_size: int = 64
+        self, rng: jax.random.KeyArray, centers: Iterable[int], dim: int, std: float = 1.0, batch_size: int = 64, weights: Optional[List[float]] = None,
     ) -> None:
         super().__init__()
+        if weights is not None:
+            assert len(centers) == len(weights)
+            self.weights = jnp.asarray(weights)
+        else:
+            self.weights = None
         self.batch_size = batch_size
         self.centers = jnp.array(centers)
         self.dim = dim
@@ -73,8 +78,8 @@ class MixtureNormalSampler(BaseSampler):
     def __next__(self) -> jnp.ndarray:
         self.rng, rng = jax.random.split(self.rng, 2)
         if len(self.centers) > 1:
-            comps_idx = jax.random.categorical(
-                rng, jnp.repeat(jnp.log(1.0 / len(self.centers)), len(self.centers)), shape=(self.batch_size,)
+            comps_idx = jax.random.choice(
+                rng, len(self.centers), p=self.weights, shape=(self.batch_size,)
             ).astype(int)
         else:
             comps_idx = jnp.zeros(
