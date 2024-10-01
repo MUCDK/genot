@@ -12,11 +12,13 @@ class Block(nn.Module):
     out_dim: int = 32
     num_layers: int = 3
     act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
+    dropout_rate: float = 0.0
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, train=False): # put the False for backward compatibility
         for i in range(self.num_layers):
             x = nn.Dense(self.dim, name="fc{0}".format(i))(x)
+            x = nn.Dropout(self.dropout_rate, deterministic=not train)(x)
             x = self.act_fn(x)
         x = nn.Dense(self.out_dim, name="fc_final")(x)
         return x
@@ -130,6 +132,127 @@ class MLP_vector_field(ModelBase):
             jnp.ones((1, 1)), 
             jnp.ones((1, input_dim)), 
             jnp.ones((1, self.output_dim))
+        )["params"]
+        return train_state.TrainState.create(
+            apply_fn=self.apply, params=params, tx=optimizer
+        )
+
+
+class MLP_vector_field2(ModelBase):
+    output_dim: int
+    latent_embed_dim: int
+    condition_embed_dim: Optional[int] = None
+    t_embed_dim: Optional[int] = None
+    joint_hidden_dim: Optional[int] = None
+    num_layers: int = 3    
+    act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
+    n_frequencies: int = 1
+    dropout_rate: float = 0.0
+    
+
+    def time_encoder(self, t: jnp.array) -> jnp.array:
+        freq = 2 * jnp.arange(self.n_frequencies) * jnp.pi
+        t = freq * t  
+        return jnp.concatenate((jnp.cos(t), jnp.sin(t)), axis=-1)
+        
+    def __post_init__(self):
+        
+        # set embedded dim from latent embedded dim
+        if self.condition_embed_dim is None:
+            self.condition_embed_dim = self.latent_embed_dim 
+        if self.t_embed_dim is None:
+            self.t_embed_dim = self.latent_embed_dim
+        
+        # set joint hidden dim from all embedded dim
+        concat_embed_dim = (
+                self.latent_embed_dim 
+                + self.condition_embed_dim 
+                + self.t_embed_dim
+            )
+        if self.joint_hidden_dim is not None:
+            assert (
+                self.joint_hidden_dim >= concat_embed_dim
+            ), (
+                "joint_hidden_dim must be greater than or equal to the sum of "
+                "all embedded dimensions. "
+            )
+            self.joint_hidden_dim = self.latent_embed_dim
+        else:
+            self.joint_hidden_dim = concat_embed_dim
+        super().__post_init__()
+            
+    @property
+    def is_potential(self) -> bool:  
+        return self.output_dim == 1
+        
+    @nn.compact
+    def __call__(
+            self, 
+            t: float, condition: jnp.ndarray, latent: jnp.ndarray, train: bool = False
+        ) -> jnp.ndarray:  
+        condition, latent = jnp.atleast_2d(condition, latent)
+            
+        # time embedding
+        t = jnp.full(shape=(len(condition), 1), fill_value=t)
+        t = self.time_encoder(t)
+        t = Block(
+            dim=self.t_embed_dim, 
+            out_dim=self.t_embed_dim, 
+            num_layers=self.num_layers,
+            act_fn=self.act_fn,
+            dropout_rate=self.dropout_rate
+        )(t, train)
+
+        # condition embedding
+        condition = Block(
+            dim=self.condition_embed_dim, 
+            out_dim=self.condition_embed_dim, 
+            num_layers=self.num_layers,
+            act_fn=self.act_fn,
+            dropout_rate=self.dropout_rate
+        )(condition, train=False) # try here to not use dropout 
+        
+        # latent embedding
+        latent = Block(
+            dim=self.latent_embed_dim, 
+            out_dim=self.latent_embed_dim, 
+            num_layers=self.num_layers,
+            act_fn=self.act_fn,
+            dropout_rate=self.dropout_rate
+        )(latent, train)
+
+        # concatenation of all embeddings
+        concat_embed = jnp.concatenate((t, condition, latent), axis=-1)
+        out = Block(
+            dim=self.joint_hidden_dim, 
+            out_dim=self.joint_hidden_dim, 
+            num_layers=self.num_layers,
+            act_fn=self.act_fn,
+            dropout_rate=self.dropout_rate
+        )(concat_embed, train)
+
+        # final layer
+        out = nn.Dense(
+            self.output_dim, 
+            use_bias=True, 
+            name="final_layer"
+        )(out)
+        nn.Dropout(self.dropout_rate, deterministic=not train)
+
+        return out
+
+    def create_train_state(
+        self, 
+        rng: jax.random.PRNGKeyArray, 
+        optimizer: optax.OptState, 
+        input_dim: int, 
+    ) -> NeuralTrainState:
+        params = self.init(
+            rng, 
+            jnp.ones((1, 1)), 
+            jnp.ones((1, input_dim)), 
+            jnp.ones((1, self.output_dim)),
+            train=False,
         )["params"]
         return train_state.TrainState.create(
             apply_fn=self.apply, params=params, tx=optimizer
