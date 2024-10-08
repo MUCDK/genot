@@ -21,9 +21,9 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-from entot.models.utils import MixtureNormalSampler
-from entot.models.model import OTFlowMatching, MLP_FM_VAE2, Bridge_MLP
-from entot.plotting.plots import plot_1D_balanced_new
+from genot.models.utils import MixtureNormalSampler
+from genot.models.model import OTFlowMatching, MLP_FM_VAE2, Bridge_MLP
+from genot.plotting.plots import plot_1D_balanced_new
 
 # %%
 

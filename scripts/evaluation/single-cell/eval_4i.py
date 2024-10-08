@@ -32,9 +32,9 @@ config_dir = os.path.join(project_dir, "confs/single-cell")
 cellot_path = project_dir / "cellot"
 
 # own code
-from entot.data import utils_cellot
-from entot.models.model import OTFlowMatching_
-from entot.nets.nets import MLP_vector_field, MLP_bridge
+from genot.data import utils_cellot
+from genot.models.model import OTFlowMatching_
+from genot.nets.nets import MLP_vector_field, MLP_bridge
 
 @hydra.main(config_path=config_dir, config_name="4i.yaml")
 def evaluate(cfg: DictConfig) -> None:

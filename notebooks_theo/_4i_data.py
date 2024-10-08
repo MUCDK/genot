@@ -23,11 +23,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-from entot.data.data import MixtureNormalSampler
-from entot.models.model import OTFlowMatching, OTFlowMatching_
-from entot.nets.nets import MLP_vector_field, MLP_bridge
-from entot.plotting.plots import plot_1D_balanced
-from entot.data.distributions import (
+from genot.data.data import MixtureNormalSampler
+from genot.models.model import OTFlowMatching, OTFlowMatching_
+from genot.nets.nets import MLP_vector_field, MLP_bridge
+from genot.plotting.plots import plot_1D_balanced
+from genot.data.distributions import (
     Gaussian, 
     GaussianMixture, 
     SklearnDistribution
@@ -37,7 +37,7 @@ from ott.geometry import pointcloud, costs
 from ott.tools import sinkhorn_divergence
 from ott.solvers.linear import acceleration
 from types import MappingProxyType
-from entot.data import utils_cellot
+from genot.data import utils_cellot
 import optax
 
 # %%
@@ -66,7 +66,7 @@ sinkhorn_div_fn = jax.tree_util.Partial(
 
 # %%
 
-from entot.data import utils_cellot
+from genot.data import utils_cellot
 full_dataset = utils_cellot.load_dataset(
     drug_name = "cisplatin",
     drug_setting = "4i",
@@ -97,7 +97,7 @@ eval_batch = {
 
 # %%
 
-from entot.nets.nets import MLP_vector_field
+from genot.nets.nets import MLP_vector_field
 
 
 # vector field network

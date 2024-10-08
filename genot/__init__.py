@@ -1,4 +1,4 @@
-from entot import data, models, nets
+from genot import data, models, nets
 
 """Top-level package for entot."""
 

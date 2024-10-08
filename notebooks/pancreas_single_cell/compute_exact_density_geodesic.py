@@ -16,8 +16,8 @@ import jax.numpy as jnp
 from functools import partial
 from ott.solvers.linear import sinkhorn
 from ott.problems.linear import linear_problem
-from entot.models.model import OTFlowMatching
-from entot.nets.nets import MLP_vector_field, MLP_bridge, MLP_marginal,MLP_fused_vector_field
+from genot.models.model import OTFlowMatching
+from genot.nets.nets import MLP_vector_field, MLP_bridge, MLP_marginal,MLP_fused_vector_field
 import sklearn.preprocessing as pp
 import scanpy as sc
 from ott.solvers.linear import sinkhorn, acceleration

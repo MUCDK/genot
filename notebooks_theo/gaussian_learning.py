@@ -22,11 +22,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
-from entot.data.data import MixtureNormalSampler
-from entot.models.model import OTFlowMatching
-from entot.nets.nets import MLP_vector_field, MLP_bridge
-from entot.plotting.plots import plot_1D_balanced
-from entot.data.distributions import (
+from genot.data.data import MixtureNormalSampler
+from genot.models.model import OTFlowMatching
+from genot.nets.nets import MLP_vector_field, MLP_bridge
+from genot.plotting.plots import plot_1D_balanced
+from genot.data.distributions import (
     Gaussian, 
     GaussianMixture, 
     SklearnDistribution
@@ -202,7 +202,7 @@ plot_batch(
 
 # %%
 
-from entot.nets.nets import (
+from genot.nets.nets import (
     MLP_vector_field,
     old_MLP_vector_field
 )

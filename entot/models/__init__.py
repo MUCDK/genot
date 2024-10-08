@@ -1,1 +1,0 @@
-from entot.models import *

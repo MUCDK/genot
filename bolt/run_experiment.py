@@ -19,10 +19,10 @@ def main(config: argparse.Namespace):
     # The turibolt package is available on all Bolt tasks.
     import turibolt as bolt
 
-    from entot.data.data import create_gaussian_split, create_gaussians
-    from entot.models.models import KantorovichGapModel, NoiseOutsourcingModel
-    from entot.models.utils import DataLoader
-    from entot.nets import UNet
+    from genot.data.data import create_gaussian_split, create_gaussians
+    from genot.models.models import KantorovichGapModel, NoiseOutsourcingModel
+    from genot.models.utils import DataLoader
+    from genot.nets import UNet
 
     # helper functions (normally in jupyter notebook)
     def h5py_to_dataset(path, img_size=64, batch_size: int = 64):
