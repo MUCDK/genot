@@ -1,15 +1,15 @@
 [tool.poetry]
-name = "entot"
+name = "genot"
 version = "0.1.0"  # <<COOKIETEMPLE_FORCE_BUMP>>
-description = "Neural entropic optimal transport"
+description = "Generative Entropic Neural Optimal Transport"
 authors = ["Dominik Klein <dominik.klein@helmholtz-munich.de>"]
 license = "MIT"
 readme = "README.rst"
-homepage = "https://github.com/MUCDK/entot"
-repository = "https://github.com/MUCDK/entot"
+homepage = "https://github.com/MUCDK/genot"
+repository = "https://github.com/MUCDK/genot"
 documentation = "https://entot.readthedocs.io"
 packages = [
-    { include = "entot" },
+    { include = "genot" },
 ]
 classifiers = [
     "Programming Language :: Python :: 3.8",
@@ -26,7 +26,7 @@ rich = ">=10.3.0"
 PyYAML = ">=5.4.1"
 scanpy = ">=1.9.3"
 moscot = ">=0.3.1"
-ott-jax = "0.4.3.dev22+gf275dc4"
+ott-jax = "==0.4.7 "
 typing-extensions = ">=4.7.0"
 tensorflow = ">=2.10.0"
 tensorflow-datasets = ">=4.9.0"
