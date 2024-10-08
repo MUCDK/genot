@@ -2,7 +2,7 @@
 import pytest
 from click.testing import CliRunner
 
-from entot import __main__
+from genot import __main__
 
 
 @pytest.fixture

@@ -1,0 +1,38 @@
+Starting job 14233633
+SLURM assigned me the node(s): supergpu02
+[I 2023-11-15 21:04:29.799 ServerApp] Package notebook took 0.0000s to import
+[I 2023-11-15 21:04:31.198 ServerApp] Package jupyter_lsp took 1.3981s to import
+[W 2023-11-15 21:04:31.199 ServerApp] A `_jupyter_server_extension_points` function was not found in jupyter_lsp. Instead, a `_jupyter_server_extension_paths` function was found and will be used for now. This function name will be deprecated in future releases of Jupyter Server.
+[I 2023-11-15 21:04:31.739 ServerApp] Package jupyter_server_terminals took 0.5393s to import
+[I 2023-11-15 21:04:31.740 ServerApp] Package jupyterlab took 0.0000s to import
+[I 2023-11-15 21:04:33.807 ServerApp] Package notebook_shim took 0.0000s to import
+[W 2023-11-15 21:04:33.808 ServerApp] A `_jupyter_server_extension_points` function was not found in notebook_shim. Instead, a `_jupyter_server_extension_paths` function was found and will be used for now. This function name will be deprecated in future releases of Jupyter Server.
+[I 2023-11-15 21:04:33.835 ServerApp] jupyter_lsp | extension was successfully linked.
+[I 2023-11-15 21:04:33.840 ServerApp] jupyter_server_terminals | extension was successfully linked.
+[I 2023-11-15 21:04:33.845 ServerApp] jupyterlab | extension was successfully linked.
+[I 2023-11-15 21:04:33.849 ServerApp] notebook | extension was successfully linked.
+[I 2023-11-15 21:04:48.742 ServerApp] notebook_shim | extension was successfully linked.
+[W 2023-11-15 21:04:49.326 ServerApp] WARNING: The Jupyter server is listening on all IP addresses and not using encryption. This is not recommended.
+[I 2023-11-15 21:04:49.338 ServerApp] notebook_shim | extension was successfully loaded.
+[I 2023-11-15 21:04:49.360 ServerApp] jupyter_lsp | extension was successfully loaded.
+[I 2023-11-15 21:04:49.362 ServerApp] jupyter_server_terminals | extension was successfully loaded.
+[I 2023-11-15 21:04:49.382 LabApp] JupyterLab extension loaded from /home/icb/dominik.klein/miniconda3/envs/velovi/lib/python3.11/site-packages/jupyterlab
+[I 2023-11-15 21:04:49.382 LabApp] JupyterLab application directory is /home/icb/dominik.klein/miniconda3/envs/velovi/share/jupyter/lab
+[I 2023-11-15 21:04:49.383 LabApp] Extension Manager is 'pypi'.
+[I 2023-11-15 21:04:49.410 ServerApp] jupyterlab | extension was successfully loaded.
+[I 2023-11-15 21:04:49.439 ServerApp] notebook | extension was successfully loaded.
+[I 2023-11-15 21:04:49.440 ServerApp] The port 8888 is already in use, trying another port.
+[I 2023-11-15 21:04:49.440 ServerApp] Serving notebooks from local directory: /home/icb/dominik.klein/git_repos/entot/data
+[I 2023-11-15 21:04:49.440 ServerApp] Jupyter Server 2.7.0 is running at:
+[I 2023-11-15 21:04:49.440 ServerApp] http://localhost:8889/tree?token=fe79da9fbbf771fcfc105335ac980b04cd5e6cf33b602588
+[I 2023-11-15 21:04:49.440 ServerApp]     http://127.0.0.1:8889/tree?token=fe79da9fbbf771fcfc105335ac980b04cd5e6cf33b602588
+[I 2023-11-15 21:04:49.440 ServerApp] Use Control-C to stop this server and shut down all kernels (twice to skip confirmation).
+[C 2023-11-15 21:04:49.518 ServerApp] 
+    
+    To access the server, open this file in a browser:
+        file:///home/icb/dominik.klein/.local/share/jupyter/runtime/jpserver-406774-open.html
+    Or copy and paste one of these URLs:
+        http://localhost:8889/tree?token=fe79da9fbbf771fcfc105335ac980b04cd5e6cf33b602588
+        http://127.0.0.1:8889/tree?token=fe79da9fbbf771fcfc105335ac980b04cd5e6cf33b602588
+[I 2023-11-15 21:04:49.804 ServerApp] Skipped non-installed server(s): bash-language-server, dockerfile-language-server-nodejs, javascript-typescript-langserver, jedi-language-server, julia-language-server, pyright, python-language-server, python-lsp-server, r-languageserver, sql-language-server, texlab, typescript-language-server, unified-language-server, vscode-css-languageserver-bin, vscode-html-languageserver-bin, vscode-json-languageserver-bin, yaml-language-server
+slurmstepd: error: *** JOB 14233633 ON supergpu02 CANCELLED AT 2023-11-15T21:06:29 ***
