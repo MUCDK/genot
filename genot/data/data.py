@@ -51,14 +51,14 @@ class DataLoader(BaseSampler):
         self.data = data
         self.batch_size = batch_size
 
-    def __call__(self, key: jax.random.KeyArray) -> jnp.ndarray:
+    def __call__(self, key: jax.Array) -> jnp.ndarray:
         inds = jax.random.choice(key, len(self.data), shape=[self.batch_size])
         return self.data[inds, :]
 
 
 class MixtureNormalSampler(BaseSampler):
     def __init__(
-        self, rng: jax.random.KeyArray, centers: Iterable[int], dim: int, std: float = 1.0, batch_size: int = 64, weights: Optional[List[float]] = None,
+        self, rng: jax.Array, centers: Iterable[int], dim: int, std: float = 1.0, batch_size: int = 64, weights: Optional[List[float]] = None,
     ) -> None:
         super().__init__()
         if weights is not None:

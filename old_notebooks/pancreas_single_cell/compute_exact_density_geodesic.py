@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from functools import partial
 from ott.solvers.linear import sinkhorn
 from ott.problems.linear import linear_problem
-from genot.models.model import OTFlowMatching
+from genot.models.model import GENOT
 from genot.nets.nets import MLP_vector_field, MLP_bridge, MLP_marginal,MLP_fused_vector_field
 import sklearn.preprocessing as pp
 import scanpy as sc
@@ -38,7 +38,7 @@ neural_net = MLP_vector_field(target_train.shape[1], latent_embed_dim = 256, num
 bridge_net = MLP_bridge(target_train.shape[1], 1)
 
 
-otfm = OTFlowMatching(neural_net, bridge_net=bridge_net, ot_solver=ot_solver, epsilon=1e-2, scale_cost="mean", input_dim=30, output_dim=30, iterations=10_000, k_noise_per_x=1)
+otfm = GENOT(neural_net, bridge_net=bridge_net, ot_solver=ot_solver, cost_fn="graph", graph_kwargs={"k_neighbors": 1024}, epsilon=1e-2, scale_cost="mean", input_dim=30, output_dim=30, iterations=10_000, k_noise_per_x=1)
 otfm(source_train, target_train, 1024, 1024)
 
 def compute_densities(source: jnp.ndarray, compute_densities_at: jnp.ndarray, rng: jax.Array, approx=True):
@@ -114,4 +114,4 @@ r = []
 for batch in outputs:
     r.append(batch[-1])
 r_arr = np.vstack(r)
-np.save("pancreas_densities_l2_new", r_arr)
+np.save("pancreas_densities_geodesic_cost_new", r_arr)

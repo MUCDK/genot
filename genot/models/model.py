@@ -17,17 +17,17 @@ from ott.problems.linear import linear_problem
 from ott.problems.quadratic import quadratic_problem
 from ott.solvers import was_solver
 from ott.solvers.linear import sinkhorn
-from ott.solvers.nn.models import ModelBase
 from ott.solvers.quadratic import gromov_wasserstein
+import flax.linen as nn
 
 Match_fn_T = Callable[
-    [jax.random.PRNGKeyArray, jnp.array, jnp.array], Tuple[jnp.array, jnp.array, jnp.array, jnp.array]
+    [jax.Array, jnp.array, jnp.array], Tuple[jnp.array, jnp.array, jnp.array, jnp.array]
 ]
-Match_latent_fn_T = Callable[[jax.random.PRNGKeyArray, jnp.array, jnp.array], Tuple[jnp.array, jnp.array]]
+Match_latent_fn_T = Callable[[jax.Array, jnp.array, jnp.array], Tuple[jnp.array, jnp.array]]
 
 
 def sample_conditional_indices_from_tmap(
-    key: jax.random.PRNGKeyArray,
+    key: jax.Array,
     tmat: jnp.ndarray,
     k_samples_per_x: Union[int, jnp.ndarray],
     left_marginals: Optional[jnp.ndarray],
@@ -53,10 +53,10 @@ def sample_conditional_indices_from_tmap(
     return jnp.repeat(indices, k_samples_per_x), indices_per_row % tmat.shape[1]
 
 
-class OTFlowMatching:
+class GENOT:
     def __init__(
         self,
-        neural_net: Union[Type[ModelBase], Tuple[Type[ModelBase], Type[ModelBase]]],
+        neural_net: Union[Type[nn.Module], Tuple[Type[nn.Module], Type[nn.Module]]],
         input_dim: int,
         output_dim: int,
         iterations: int,
@@ -377,7 +377,7 @@ class OTFlowMatching:
             static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x"],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -436,7 +436,7 @@ class OTFlowMatching:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: Tuple[jnp.ndarray, jnp.ndarray],
             y: Tuple[jnp.ndarray, jnp.ndarray],
             ot_solver: Any,
@@ -535,7 +535,7 @@ class OTFlowMatching:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -594,7 +594,7 @@ class OTFlowMatching:
     def _get_match_latent_fn(self, ot_solver: Type[sinkhorn.Sinkhorn], epsilon: float, scale_cost: Any) -> Callable:
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "scale_cost"])
         def match_latent_to_data(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             ot_solver: Type[was_solver.WassersteinSolver],
             x: jnp.ndarray,
             y: jnp.ndarray,
@@ -608,7 +608,7 @@ class OTFlowMatching:
 
         return jax.tree_util.Partial(match_latent_to_data, ot_solver=ot_solver, epsilon=epsilon, scale_cost=scale_cost)
 
-    def _get_step_fn(self) -> Callable:
+    def _get_step_fn(self, warmup: bool = False) -> Callable:
         def loss_fn(
             params_mlp: jnp.array,
             apply_fn_mlp: Callable,
@@ -658,7 +658,7 @@ class OTFlowMatching:
 
         @jax.jit
         def step_fn(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             state_neural_net: TrainState,
             batch: Dict[str, jnp.array],
             state_eta: Optional[TrainState] = None,
@@ -684,6 +684,7 @@ class OTFlowMatching:
                 state_neural_net.apply_fn,
                 batch,
             )
+            
             metrics = {}
             metrics["loss"] = loss
 
@@ -721,7 +722,7 @@ class OTFlowMatching:
 
             return (
                 metrics,
-                state_neural_net.apply_gradients(grads=grads_mlp),
+                state_neural_net.apply_gradients(grads=grads_mlp[0]),
                 new_state_eta,
                 new_state_xi,
                 eta_predictions,

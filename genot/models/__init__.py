@@ -1,1 +1,1 @@
-from genot.models import *
+from genot.models.model import GENOT

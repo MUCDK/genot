@@ -4,7 +4,6 @@ import jax
 import jax.numpy as jnp
 import optax 
 from flax.training import train_state
-from ott.solvers.nn.models import ModelBase, NeuralTrainState
 from flax.core import frozen_dict
 
 class Block(nn.Module):
@@ -24,7 +23,7 @@ class Block(nn.Module):
         return x
 
 
-class MLP_vector_field(ModelBase):
+class MLP_vector_field(nn.Module):
     output_dim: int
     latent_embed_dim: int
     condition_embed_dim: Optional[int] = None
@@ -123,7 +122,7 @@ class MLP_vector_field(ModelBase):
 
     def create_train_state(
         self, 
-        rng: jax.random.PRNGKeyArray, 
+        rng: jax.Array, 
         optimizer: optax.OptState, 
         input_dim: int, 
     ) -> NeuralTrainState:
@@ -138,7 +137,7 @@ class MLP_vector_field(ModelBase):
         )
 
 
-class MLP_vector_field2(ModelBase):
+class MLP_vector_field2(nn.Module):
     output_dim: int
     latent_embed_dim: int
     condition_embed_dim: Optional[int] = None
@@ -243,7 +242,7 @@ class MLP_vector_field2(ModelBase):
 
     def create_train_state(
         self, 
-        rng: jax.random.PRNGKeyArray, 
+        rng: jax.Array, 
         optimizer: optax.OptState, 
         input_dim: int, 
     ) -> NeuralTrainState:
@@ -259,7 +258,7 @@ class MLP_vector_field2(ModelBase):
         )
 
 
-class MLP_fused_vector_field(ModelBase):
+class MLP_fused_vector_field(nn.Module):
     quad_output_dim: int
     lin_output_dim: int
     latent_embed_dim: int
@@ -373,7 +372,7 @@ class MLP_fused_vector_field(ModelBase):
 
     def create_train_state(
         self, 
-        rng: jax.random.PRNGKeyArray, 
+        rng: jax.Array, 
         optimizer: optax.OptState, 
         input_dim: int, 
     ) -> NeuralTrainState:
@@ -389,7 +388,7 @@ class MLP_fused_vector_field(ModelBase):
 
 
 
-class old_MLP_vector_field(ModelBase):
+class old_MLP_vector_field(nn.Module):
     output_dim: int
     t_embed_dim: int
     condition_embed_dim: int
@@ -422,7 +421,7 @@ class old_MLP_vector_field(ModelBase):
         return z
 
     def create_train_state(
-        self, rng: jax.random.PRNGKeyArray, optimizer: optax.OptState, source_dim: int, 
+        self, rng: jax.Array, optimizer: optax.OptState, source_dim: int, 
     ) -> NeuralTrainState:
         params = self.init(
             rng, 
@@ -432,7 +431,7 @@ class old_MLP_vector_field(ModelBase):
         )["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
-class MLP_bridge(ModelBase):
+class MLP_bridge(nn.Module):
     output_dim: int
     hidden_dim: int
     bridge_type: Literal["full", "mean", "constant"] = "constant"
@@ -492,7 +491,7 @@ class MLP_bridge(ModelBase):
 
     def create_train_state(
         self,
-        rng: jax.random.PRNGKeyArray,
+        rng: jax.Array,
         optimizer: optax.OptState,
         input_dim: int,
     ) -> NeuralTrainState:
@@ -504,7 +503,7 @@ class MLP_bridge(ModelBase):
             apply_fn=self.apply, params=params, tx=optimizer
         )
         
-class MLP_marginal(ModelBase):
+class MLP_marginal(nn.Module):
     hidden_dim: int
     num_layers: int = 3
     act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
@@ -526,7 +525,7 @@ class MLP_marginal(ModelBase):
 
     # def create_train_state(
     #     self,
-    #     rng: jax.random.PRNGKeyArray,
+    #     rng: jax.Array,
     #     optimizer: optax.OptState,
     #     input_dim: int,
     # ) -> NeuralTrainState:
@@ -535,7 +534,7 @@ class MLP_marginal(ModelBase):
     #         apply_fn=self.apply, params=params, tx=optimizer
     #     )
 
-# class Bridge_MLP_mean(ModelBase):
+# class Bridge_MLP_mean(nn.Module):
 #     output_dim: int
 #     t_embed_dim: int
 #     condition_embed_dim: int
@@ -554,7 +553,7 @@ class MLP_marginal(ModelBase):
 
 #     def create_train_state(
 #         self,
-#         rng: jax.random.PRNGKeyArray,
+#         rng: jax.Array,
 #         optimizer: optax.OptState,
 #         input_dim: int,
 #     ) -> NeuralTrainState:
@@ -562,7 +561,7 @@ class MLP_marginal(ModelBase):
 #         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
 
-# class Bridge_MLP_full(ModelBase):
+# class Bridge_MLP_full(nn.Module):
 #     output_dim: int
 #     t_embed_dim: int
 #     condition_embed_dim: int
@@ -587,7 +586,7 @@ class MLP_marginal(ModelBase):
 
 #     def create_train_state(
 #         self,
-#         rng: jax.random.PRNGKeyArray,
+#         rng: jax.Array,
 #         optimizer: optax.OptState,
 #         output_dim: int,
 #     ) -> NeuralTrainState:
@@ -595,7 +594,7 @@ class MLP_marginal(ModelBase):
 #         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
 
-# class Bridge_MLP_constant(ModelBase):
+# class Bridge_MLP_constant(nn.Module):
 #     output_dim: int
 #     t_embed_dim: int
 #     condition_embed_dim: int
@@ -608,7 +607,7 @@ class MLP_marginal(ModelBase):
 
 #     def create_train_state(
 #         self,
-#         rng: jax.random.PRNGKeyArray,
+#         rng: jax.Array,
 #         optimizer: optax.OptState,
 #         input_dim: int,
 #     ) -> NeuralTrainState:

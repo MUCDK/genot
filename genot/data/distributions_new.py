@@ -42,7 +42,7 @@ class Distribution(abc.ABC):
     def __init__(
         self,
         batch_size: int = 1_024,
-        init_rng: Optional[jax.random.PRNGKeyArray] = None,
+        init_rng: Optional[jax.Array] = None,
     ):
         self.batch_size = batch_size
         self.init_rng = (
@@ -52,7 +52,7 @@ class Distribution(abc.ABC):
 
     @abc.abstractmethod
     def generate_samples(
-        self, rng: jax.random.PRNGKeyArray, num_samples: int
+        self, rng: jax.Array, num_samples: int
     ) -> Any:
         """Args:
           rng: PRNG key.
@@ -100,7 +100,7 @@ class Gaussian(Distribution):
         mean: jnp.ndarray,
         cov: jnp.ndarray,
         batch_size: int = 1_024,
-        init_rng: Optional[jax.random.PRNGKeyArray] = None,
+        init_rng: Optional[jax.Array] = None,
     ):
         super(Gaussian, self).__init__(
             batch_size=batch_size, init_rng=init_rng
@@ -133,7 +133,7 @@ class Gaussian(Distribution):
 
     def generate_samples(
         self,
-        rng: jax.random.PRNGKeyArray,
+        rng: jax.Array,
         num_samples: int,
     ) -> jnp.array:
         """Sample generator from the distribution.
@@ -169,7 +169,7 @@ class GaussianMixture(Distribution):
         covs: jnp.ndarray,
         proportions: Optional[jnp.ndarray] = None,
         batch_size: int = 1_024,
-        init_rng: Optional[jax.random.PRNGKeyArray] = None,
+        init_rng: Optional[jax.Array] = None,
     ):
         super(GaussianMixture, self).__init__(
             batch_size=batch_size, init_rng=init_rng
@@ -227,7 +227,7 @@ class GaussianMixture(Distribution):
 
     def generate_samples(
         self,
-        rng: jax.random.PRNGKeyArray,
+        rng: jax.Array,
         num_samples: int,
         return_indices: bool = False,
     ) -> jnp.array:
@@ -273,7 +273,7 @@ class BallUniform(Distribution):
         dim_data: int,
         radius: float = 1.,
         batch_size: int = 1_024,
-        init_rng: Optional[jax.random.PRNGKeyArray] = None,
+        init_rng: Optional[jax.Array] = None,
     ):
         self.dim_data = dim_data
         super(BallUniform, self).__init__(
@@ -298,7 +298,7 @@ class BallUniform(Distribution):
 
     def generate_samples(
         self,
-        rng: jax.random.PRNGKeyArray,
+        rng: jax.Array,
         num_samples: int,
     ) -> jnp.array:
         """Sample generator from the distribution.
@@ -340,7 +340,7 @@ class SphereUniform(Distribution):
         dim_data: int,
         radius: float = 1.,
         batch_size: int = 1_024,
-        init_rng: Optional[jax.random.PRNGKeyArray] = None,
+        init_rng: Optional[jax.Array] = None,
     ):
         self.dim_data = dim_data
         super(SphereUniform, self).__init__(
@@ -364,7 +364,7 @@ class SphereUniform(Distribution):
 
     def generate_samples(
         self,
-        rng: jax.random.PRNGKeyArray,
+        rng: jax.Array,
         num_samples: int,
     ) -> jnp.array:
         """Sample generator from the distribution.
@@ -396,7 +396,7 @@ class RectangleUniform(Distribution):
         self,
         limits: jnp.ndarray,
         batch_size: int = 1_024,
-        init_rng: Optional[jax.random.PRNGKeyArray] = None,
+        init_rng: Optional[jax.Array] = None,
     ):
         super(RectangleUniform, self).__init__(
             batch_size=batch_size, init_rng=init_rng
@@ -427,7 +427,7 @@ class RectangleUniform(Distribution):
 
     def generate_samples(
         self,
-        rng: jax.random.PRNGKeyArray,
+        rng: jax.Array,
         num_samples: int,
     ) -> jnp.array:
         """Sample generator from the distribution.
@@ -468,7 +468,7 @@ class SphereDistribution(Distribution):
         phi_dist: Union[Distribution, numpyro_dist.Distribution],
         radius: float = 1.,
         batch_size: int = 1_024,
-        init_rng: Optional[jax.random.PRNGKeyArray] = None,
+        init_rng: Optional[jax.Array] = None,
     ):
         super(SphereDistribution, self).__init__(
             batch_size=batch_size, init_rng=init_rng
@@ -526,7 +526,7 @@ class SphereDistribution(Distribution):
 
     def generate_samples(
         self,
-        rng: jax.random.PRNGKeyArray,
+        rng: jax.Array,
         num_samples: int,
         return_indices: bool = False,
     ):
@@ -607,7 +607,7 @@ class SklearnDistribution(Distribution):
         factor: float = .5,
         noise: float = .01,
         batch_size: int = 1_024,
-        init_rng: Optional[jax.random.PRNGKeyArray] = None,
+        init_rng: Optional[jax.Array] = None,
     ):
         self.name = name
         super(SklearnDistribution, self).__init__(

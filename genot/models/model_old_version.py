@@ -32,16 +32,17 @@ from sklearn.datasets import make_moons, make_swiss_roll
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 import wandb
+import flax.linen as nn
 
 
 Match_fn_T = Callable[
-    [jax.random.PRNGKeyArray, jnp.array, jnp.array], Tuple[jnp.array, jnp.array, jnp.array, jnp.array]
+    [jax.Array, jnp.array, jnp.array], Tuple[jnp.array, jnp.array, jnp.array, jnp.array]
 ]
-Match_latent_fn_T = Callable[[jax.random.PRNGKeyArray, jnp.array, jnp.array], Tuple[jnp.array, jnp.array]]
+Match_latent_fn_T = Callable[[jax.Array, jnp.array, jnp.array], Tuple[jnp.array, jnp.array]]
 
 
 def sample_indices_from_tmap(
-    key: jax.random.PRNGKeyArray, tmat: jnp.ndarray, n_samples: Optional[int]
+    key: jax.Array, tmat: jnp.ndarray, n_samples: Optional[int]
 ) -> Tuple[jnp.array, jnp.array]:
     n_samples = n_samples if isinstance(n_samples, int) else tmat.shape[1]
     pi_star_inds = jax.random.categorical(key, logits=jnp.log(tmat.flatten()), shape=(n_samples,))
@@ -49,7 +50,7 @@ def sample_indices_from_tmap(
 
 
 def sample_conditional_indices_from_tmap(
-    key: jax.random.PRNGKeyArray, tmat: jnp.ndarray, k_samples_per_x: Union[int, jnp.ndarray], left_marginals: Optional[jnp.ndarray], *, is_balanced: bool
+    key: jax.Array, tmat: jnp.ndarray, k_samples_per_x: Union[int, jnp.ndarray], left_marginals: Optional[jnp.ndarray], *, is_balanced: bool
 ) -> Tuple[jnp.array, jnp.array]:
     if not is_balanced:
         key, key2 = jax.random.split(key, 2)
@@ -333,7 +334,7 @@ class OTFlowMatching:
             static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x"],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -388,7 +389,7 @@ class OTFlowMatching:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: Tuple[jnp.ndarray, jnp.ndarray],
             y: Tuple[jnp.ndarray, jnp.ndarray],
             ot_solver: Any,
@@ -481,7 +482,7 @@ class OTFlowMatching:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -536,7 +537,7 @@ class OTFlowMatching:
     def _get_match_latent_fn(self, ot_solver: Type[sinkhorn.Sinkhorn], epsilon: float, scale_cost: Any) -> Callable:
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "scale_cost"])
         def match_latent_to_data(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             ot_solver: Type[was_solver.WassersteinSolver],
             x: jnp.ndarray,
             y: jnp.ndarray,
@@ -600,7 +601,7 @@ class OTFlowMatching:
 
         @jax.jit
         def step_fn(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             state_neural_net: TrainState,
             state_bridge_net: TrainState,
             batch: Dict[str, jnp.array],
@@ -1114,7 +1115,7 @@ class OTFlowMatching_:
             static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x"],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -1169,7 +1170,7 @@ class OTFlowMatching_:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: Tuple[jnp.ndarray, jnp.ndarray],
             y: Tuple[jnp.ndarray, jnp.ndarray],
             ot_solver: Any,
@@ -1262,7 +1263,7 @@ class OTFlowMatching_:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -1317,7 +1318,7 @@ class OTFlowMatching_:
     def _get_match_latent_fn(self, ot_solver: Type[sinkhorn.Sinkhorn], epsilon: float, scale_cost: Any) -> Callable:
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "scale_cost"])
         def match_latent_to_data(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             ot_solver: Type[was_solver.WassersteinSolver],
             x: jnp.ndarray,
             y: jnp.ndarray,
@@ -1382,7 +1383,7 @@ class OTFlowMatching_:
 
         @jax.jit
         def step_fn(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             state_neural_net: TrainState,
             state_bridge_net: TrainState,
             batch: Dict[str, jnp.array],
@@ -1780,7 +1781,7 @@ class OTFlowMatching2:
             static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x", "process_data"],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -1838,7 +1839,7 @@ class OTFlowMatching2:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: Tuple[jnp.ndarray, jnp.ndarray],
             y: Tuple[jnp.ndarray, jnp.ndarray],
             ot_solver: Any,
@@ -1932,7 +1933,7 @@ class OTFlowMatching2:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -1987,7 +1988,7 @@ class OTFlowMatching2:
     def _get_match_latent_fn(self, ot_solver: Type[sinkhorn.Sinkhorn], epsilon: float, scale_cost: Any) -> Callable:
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "scale_cost"])
         def match_latent_to_data(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             ot_solver: Type[was_solver.WassersteinSolver],
             x: jnp.ndarray,
             y: jnp.ndarray,
@@ -2052,7 +2053,7 @@ class OTFlowMatching2:
 
         @jax.jit
         def step_fn(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             state_neural_net: TrainState,
             state_bridge_net: TrainState,
             batch: Dict[str, jnp.array],
@@ -2444,7 +2445,7 @@ class OTFlowMatchingGeo:
             static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x"],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -2499,7 +2500,7 @@ class OTFlowMatchingGeo:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: Tuple[jnp.ndarray, jnp.ndarray],
             y: Tuple[jnp.ndarray, jnp.ndarray],
             ot_solver: Any,
@@ -2601,7 +2602,7 @@ class OTFlowMatchingGeo:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -2656,7 +2657,7 @@ class OTFlowMatchingGeo:
     def _get_match_latent_fn(self, ot_solver: Type[sinkhorn.Sinkhorn], epsilon: float, scale_cost: Any) -> Callable:
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "scale_cost"])
         def match_latent_to_data(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             ot_solver: Type[was_solver.WassersteinSolver],
             x: jnp.ndarray,
             y: jnp.ndarray,
@@ -2720,7 +2721,7 @@ class OTFlowMatchingGeo:
 
         @jax.jit
         def step_fn(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             state_neural_net: TrainState,
             state_bridge_net: TrainState,
             batch: Dict[str, jnp.array],
@@ -3175,7 +3176,7 @@ class OTFlowMatching_rot_invariant:
             static_argnames=["ot_solver", "epsilon", "cost_fn", "scale_cost", "tau_a", "tau_b", "k_samples_per_x"],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -3230,7 +3231,7 @@ class OTFlowMatching_rot_invariant:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: Tuple[jnp.ndarray, jnp.ndarray],
             y: Tuple[jnp.ndarray, jnp.ndarray],
             initializer: Any,
@@ -3324,7 +3325,7 @@ class OTFlowMatching_rot_invariant:
             ],
         )
         def match_pairs(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             x: jnp.ndarray,
             y: jnp.ndarray,
             ot_solver: Any,
@@ -3379,7 +3380,7 @@ class OTFlowMatching_rot_invariant:
     def _get_match_latent_fn(self, ot_solver: Type[sinkhorn.Sinkhorn], epsilon: float, scale_cost: Any) -> Callable:
         @partial(jax.jit, static_argnames=["ot_solver", "epsilon", "scale_cost"])
         def match_latent_to_data(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             ot_solver: Type[was_solver.WassersteinSolver],
             x: jnp.ndarray,
             y: jnp.ndarray,
@@ -3443,7 +3444,7 @@ class OTFlowMatching_rot_invariant:
 
         @jax.jit
         def step_fn(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             state_neural_net: TrainState,
             state_bridge_net: TrainState,
             batch: Dict[str, jnp.array],
@@ -3523,7 +3524,7 @@ class OTFlowMatching_rot_invariant:
 
         @jax.jit
         def step_fn_warmup(
-            key: jax.random.PRNGKeyArray,
+            key: jax.Array,
             state_neural_net: TrainState,
             state_bridge_net: TrainState,
             batch: Dict[str, jnp.array],

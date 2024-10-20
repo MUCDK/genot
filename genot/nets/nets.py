@@ -4,7 +4,6 @@ import optax
 from flax.training import train_state
 import jax
 import jax.numpy as jnp
-from ott.solvers.nn.models import ModelBase, NeuralTrainState
 
 
 class Block(nn.Module):
@@ -36,7 +35,7 @@ class Block(nn.Module):
         return nn.Dense(self.out_dim, name="fc_final")(x)
 
 
-class MLP_vector_field(ModelBase):
+class MLP_vector_field(nn.Module):
     """
     Neural vector field.
 
@@ -67,7 +66,7 @@ class MLP_vector_field(ModelBase):
     joint_hidden_dim: Optional[int] = None
     num_layers: int = 3
     act_fn: Callable[[jnp.ndarray], jnp.ndarray] = nn.silu
-    n_frequencies: int = 1
+    n_frequencies: int = 1024
 
     def time_encoder(self, t: jnp.array) -> jnp.array:
         freq = 2 * jnp.arange(self.n_frequencies) * jnp.pi
@@ -130,15 +129,15 @@ class MLP_vector_field(ModelBase):
 
     def create_train_state(
         self,
-        rng: jax.random.PRNGKeyArray,
+        rng: jax.Array,
         optimizer: optax.OptState,
         input_dim: int,
-    ) -> NeuralTrainState:
+    ) -> train_state.TrainState:
         params = self.init(rng, jnp.ones((1, 1)), jnp.ones((1, input_dim)), jnp.ones((1, self.output_dim)))["params"]
         return train_state.TrainState.create(apply_fn=self.apply, params=params, tx=optimizer)
 
 
-class MLP_marginal(ModelBase):
+class MLP_marginal(nn.Module):
     """
     Neural network parameterizing a reweighting function.
 
@@ -165,3 +164,14 @@ class MLP_marginal(ModelBase):
         z = x
         z = Block(dim=self.hidden_dim, out_dim=1, num_layers=self.num_layers, act_fn=self.act_fn)(z)
         return nn.softplus(z)
+    
+    def create_train_state(
+         self,
+         rng: jax.Array,
+         optimizer: optax.OptState,
+         input_dim: int,
+     ) -> train_state.TrainState:
+        params = self.init(rng, jnp.ones((1, input_dim)))["params"]
+        return train_state.TrainState.create(
+            apply_fn=self.apply, params=params, tx=optimizer
+        )
