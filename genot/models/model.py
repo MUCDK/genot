@@ -19,6 +19,7 @@ from ott.solvers import was_solver
 from ott.solvers.linear import sinkhorn
 from ott.solvers.quadratic import gromov_wasserstein
 import flax.linen as nn
+from ott.initializers.quadratic.initializers import QuadraticInitializer
 
 Match_fn_T = Callable[
     [jax.Array, jnp.array, jnp.array], Tuple[jnp.array, jnp.array, jnp.array, jnp.array]
@@ -52,6 +53,12 @@ def sample_conditional_indices_from_tmap(
 
     return jnp.repeat(indices, k_samples_per_x), indices_per_row % tmat.shape[1]
 
+def get_quad_initializer(push_forward: jnp.ndarray, target: jnp.ndarray):
+    n = len(push_forward)
+    pc = pointcloud.PointCloud(push_forward, target)
+    geom = geometry.Geometry(pc.cost_matrix, epsilon=1e-1)
+    lp = linear_problem.LinearProblem(geom, a=jnp.ones(n) / n, b=jnp.ones(n) / n)
+    return lp
 
 class GENOT:
     def __init__(
@@ -154,6 +161,17 @@ class GENOT:
                 "If `ot_solver` is `GromovWasserstein`, `epsilon` must be `None`. This check is performed "
                 "to ensure that in the (fused) Gromov case the `epsilon` parameter is passed via the `ot_solver`."
             )
+        
+        if not isinstance(ot_solver, gromov_wasserstein.GromovWasserstein) and warmup_iterations != 0:
+            raise ValueError(
+                "`warmup_iterations` is only available for solving quadratic problems. It is used for initializing "
+                "the orientation of Gromov-Wasserstein problems."
+            )
+        
+        if initializer is not None and initializer!="linearisation_push_forward":
+            raise ValueError(
+                "Only 'linearisation_push_forward' is a valid initializer. Note it should only be used for the quadratic OT problem."
+            )
 
         # setup parameters
         self.rng = jax.random.PRNGKey(seed)
@@ -165,7 +183,7 @@ class GENOT:
         self.neural_net = neural_net
         self.state_neural_net: Optional[TrainState] = None
         self.optimizer = optax.adamw(learning_rate=1e-4, weight_decay=1e-10) if optimizer is None else optimizer
-        self.initializer = initializer
+        self.use_init =True if initializer is not None else False
         self.warmup_iterations = warmup_iterations
         self.noise_fn = self.noise_fn = jax.tree_util.Partial(
             jax.random.multivariate_normal, mean=jnp.zeros((output_dim,)), cov=jnp.diag(jnp.ones((output_dim,)))
@@ -216,8 +234,8 @@ class GENOT:
             Keyword arguments for the setup function
         """
         self.state_neural_net = self.neural_net.create_train_state(self.rng, self.optimizer, self.input_dim)
-        self.step_fn = self._get_step_fn(warmup=False)
-        self.step_fn_warmup = self._get_step_fn(warmup=True)
+        self.step_fn = self._get_step_fn(with_init=False)
+        self.step_fn_with_init = self._get_step_fn(with_init=True)
         if self.solver_latent_to_data is not None:
             self.match_latent_to_data_fn = self._get_match_latent_fn(
                 self.solver_latent_to_data, self.latent_to_data_epsilon, self.latent_to_data_scale_cost
@@ -324,10 +342,10 @@ class GENOT:
         for step in tqdm(range(self.iterations)):
             if step < self.warmup_iterations:
                 source_batch, target_batch = x[:batch_size_source], y[:batch_size_target] #x_load_fn(next(x_loader)), y_load_fn(next(y_loader))
-                step_fn = self.step_fn_warmup
+                step_fn = self.step_fn
             else:
                 source_batch, target_batch =x_load_fn(next(x_loader)), y_load_fn(next(y_loader))
-                step_fn = self.step_fn
+                step_fn = self.step_fn_with_init if self.use_init else self.step_fn
 
             self.rng, rng_time, rng_noise, rng_step_fn = jax.random.split(self.rng, 4)
             batch["source"] = source_batch
@@ -387,6 +405,7 @@ class GENOT:
             cost_fn: str,
             scale_cost: Any,
             k_samples_per_x: int,
+            **_: Any,
         ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
             geom = pointcloud.PointCloud(x, y, epsilon=epsilon, scale_cost=scale_cost, cost_fn=cost_fn)
             out = ot_solver(linear_problem.LinearProblem(geom, tau_a=tau_a, tau_b=tau_b))
@@ -439,6 +458,7 @@ class GENOT:
             key: jax.Array,
             x: Tuple[jnp.ndarray, jnp.ndarray],
             y: Tuple[jnp.ndarray, jnp.ndarray],
+            initializer: Any,
             ot_solver: Any,
             tau_a: float,
             tau_b: float,
@@ -463,7 +483,7 @@ class GENOT:
             prob = quadratic_problem.QuadraticProblem(
                 geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty, tau_a=tau_a, tau_b=tau_b
             )
-            out = ot_solver(prob)
+            out = ot_solver(prob, init=initializer)
             a, b = out.matrix.sum(axis=1), out.matrix.sum(axis=0)
             inds_source, inds_target = sample_conditional_indices_from_tmap(
                 key=key,
@@ -608,7 +628,7 @@ class GENOT:
 
         return jax.tree_util.Partial(match_latent_to_data, ot_solver=ot_solver, epsilon=epsilon, scale_cost=scale_cost)
 
-    def _get_step_fn(self, warmup: bool = False) -> Callable:
+    def _get_step_fn(self, with_init: bool = False) -> Callable:
         def loss_fn(
             params_mlp: jnp.array,
             apply_fn_mlp: Callable,
@@ -667,7 +687,83 @@ class GENOT:
             rng_match, rng_noise = jax.random.split(key, 2)
             original_source_batch = batch["source"]
             original_target_batch = batch["target"]
-            source_batch, target_batch, a, b = self.match_fn(rng_match, batch["source"], batch["target"])
+            source_batch, target_batch, a, b = self.match_fn(rng_match, batch["source"], batch["target"], initializer=None)
+            rng_noise = jax.random.split(rng_noise, (len(target_batch)))
+
+            noise_matched, conditional_target = jax.vmap(self.match_latent_to_data_fn, 0, 0)(
+                key=rng_noise, x=batch["noise"], y=target_batch
+            )
+
+            batch["source"] = jnp.reshape(source_batch, (len(source_batch), -1))
+            batch["target"] = jnp.reshape(conditional_target, (len(source_batch), -1))
+            batch["noise"] = jnp.reshape(noise_matched, (len(source_batch), -1))
+
+            grad_fn = jax.value_and_grad(loss_fn, argnums=[0], has_aux=False)
+            loss, grads_mlp = grad_fn(
+                state_neural_net.params,
+                state_neural_net.apply_fn,
+                batch,
+            )
+            
+            metrics = {}
+            metrics["loss"] = loss
+
+            integration_eta = jnp.sum(a)
+            integration_xi = jnp.sum(b)
+
+            if state_eta is not None:
+                grad_a_fn = jax.value_and_grad(loss_a_fn, argnums=0, has_aux=True)
+                (loss_a, eta_predictions), grads_eta = grad_a_fn(
+                    state_eta.params,
+                    state_eta.apply_fn,
+                    original_source_batch[:,],
+                    a * len(original_source_batch),
+                    integration_xi,
+                )
+
+                new_state_eta = state_eta.apply_gradients(grads=grads_eta)
+                metrics["loss_eta"] = loss_a
+
+            else:
+                new_state_eta = eta_predictions = None
+            if state_xi is not None:
+                grad_b_fn = jax.value_and_grad(loss_b_fn, argnums=0, has_aux=True)
+                (loss_b, xi_predictions), grads_xi = grad_b_fn(
+                    state_xi.params,
+                    state_xi.apply_fn,
+                    original_target_batch[:,],
+                    (b * len(original_target_batch))[:, None],
+                    integration_eta,
+                )
+                new_state_xi = state_xi.apply_gradients(grads=grads_xi)
+                metrics["loss_xi"] = loss_b
+            else:
+                new_state_xi = xi_predictions = None
+
+            return (
+                metrics,
+                state_neural_net.apply_gradients(grads=grads_mlp[0]),
+                new_state_eta,
+                new_state_xi,
+                eta_predictions,
+                xi_predictions,
+            )
+        
+        @jax.jit
+        def step_fn_with_init(
+            key: jax.Array,
+            state_neural_net: TrainState,
+            batch: Dict[str, jnp.array],
+            state_eta: Optional[TrainState] = None,
+            state_xi: Optional[TrainState] = None,
+        ):
+            rng_match, rng_noise = jax.random.split(key, 2)
+            original_source_batch = batch["source"]
+            original_target_batch = batch["target"]
+            push_forward = self.transport(original_source_batch)[0][0,...]
+            initializer = get_quad_initializer(push_forward, original_target_batch)
+
+            source_batch, target_batch, a, b = self.match_fn(rng_match, batch["source"], batch["target"], initializer=initializer)
             rng_noise = jax.random.split(rng_noise, (len(target_batch)))
 
             noise_matched, conditional_target = jax.vmap(self.match_latent_to_data_fn, 0, 0)(
@@ -729,7 +825,7 @@ class GENOT:
                 xi_predictions,
             )
 
-        return step_fn
+        return step_fn_with_init if with_init else step_fn
 
     def transport(
         self, source: jnp.array, seed: int = 0, diffeqsolve_kwargs: Dict[str, Any] = types.MappingProxyType({})
