@@ -31,6 +31,7 @@ MANIFEST
 *.h5ad
 *.csv
 *.svg
+*.npy
 
 
 # PyInstaller
