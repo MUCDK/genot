@@ -13,6 +13,10 @@ GENOT provides neural entropic optimal transport estimators for
 
 We demonstrate these capabilities on simulated data, where we have a closed-form solution, and a wide range of single-cell genomics tasks (see also `moscot <https://moscot.readthedocs.io/en/latest/>`_ for (discrete) optimal transport applications in single-cell genomics).
 
+Code Usage
+----------
+
+Check out the *notebooks* directory for a wide range of examples, also covered in the paper.
 
 Installation
 ------------
