@@ -91,4 +91,3 @@ class MixtureNormalSampler(BaseSampler):
             std_normal = jax.random.normal(rng, (self.batch_size,))
         self.centers[comps_idx]
         return jnp.reshape(std_normal * self.std + self.centers[comps_idx], (self.batch_size, self.dim))
-

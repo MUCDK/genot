@@ -1,1 +1,1 @@
-from genot.data import data, distributions_new
+from genot.data import data, distributions

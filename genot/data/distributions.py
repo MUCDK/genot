@@ -114,16 +114,16 @@ class Gaussian(Distribution):
 
         # check dimension consistency
         # and define each feature of the mixture distribution
-        if len(mean) == 1:
-            mean, cov = mean[:, None], cov[:, None]
+        dim_mean = 1 if mean.ndim == 1 else len(mean)
+        dim_cov = 1 if cov.ndim == 1 else cov.shape[1]
         assert (
-            len(mean) == cov.shape[1]
+            dim_mean == dim_cov
         ), (
             "Mean and covariance must have the same number of dimensions."
         )
         self.mean = mean
         self.cov = cov
-        self.dim_data = len(mean)
+        self.dim_data = dim_mean
 
         # define an associated numpyro distribution
         # for fast sampling
@@ -600,8 +600,9 @@ class SklearnDistribution(Distribution):
     def __init__(
         self,
         name: Name_t,
+        dim_data: int = 2,
         translation: Optional[jnp.ndarray] = None,
-        theta_rotation: float = 0,
+        theta_rotation: Optional[float] = None,
         scale: float = 1.,
         factor: float = .5,
         noise: float = .01,
@@ -619,16 +620,18 @@ class SklearnDistribution(Distribution):
             factor,
             noise,
             translation,
+            dim_data
         )
 
     def setup(
         self, 
         name: Name_t,
-        theta_rotation: float,
+        theta_rotation: Optional[float],
         scale: float,
         factor: float,
         noise: float,
         translation: Optional[jnp.ndarray] = None,
+        dim_data: int = 2,
     ):
         """Setup each feature of the distribution."""
         assert name in [
@@ -649,43 +652,54 @@ class SklearnDistribution(Distribution):
         self.noise = noise
         self.scale = scale
         self.factor = factor
-
-        # data is 2 dimensional by construction
-        self.dim_data = 2
+        self.dim_data = dim_data
 
         # set translation vector 
-        self.translation = jnp.zeros(2) if translation is None else translation
+        self.translation = (
+            jnp.zeros(self.dim_data) if translation is None else translation
+        )
         
         # define rotation matrix to rotate distribution
-        self.rotation = jnp.array(
-            [
-                [jnp.cos(theta_rotation), -jnp.sin(theta_rotation)],
-                [jnp.sin(theta_rotation), jnp.cos(theta_rotation)]
-            ]
-        )
+        if self.dim_data != 2:
+            assert dim_data == 3, (
+                "Data dimension must be 2 or 3."
+            )
+            assert theta_rotation is None, (
+                "Rotation not provided for 3d data."
+            )
+        if theta_rotation is not None:
+            self.rotation = jnp.array(
+                [
+                    [jnp.cos(theta_rotation), -jnp.sin(theta_rotation)],
+                    [jnp.sin(theta_rotation), jnp.cos(theta_rotation)]
+                ]
+            )
+        else:
+            self.rotation = None
+            
 
     def generate_samples(
-        self, rng: PRNGKeyArray, num_samples: int,
+        self, rng: PRNGKeyArray, num_samples: int, return_colors: bool = False
     ):
         """Samples generator."""
         seed = jax.random.randint(rng, [], minval=0, maxval=1e5).item()
 
         if self.name == "moon_upper":
-            samples, _ = sklearn.datasets.make_moons(
+            samples, colors = sklearn.datasets.make_moons(
                 n_samples=[num_samples, 0], 
                 random_state=seed,
                 noise=self.noise,
             )
 
         elif self.name == "moon_lower":
-            samples, _ = sklearn.datasets.make_moons(
+            samples, colors = sklearn.datasets.make_moons(
                 n_samples=[0, num_samples], 
                 random_state=seed,
                 noise=self.noise,
             )
 
         elif self.name == "circle":
-            samples, _ = sklearn.datasets.make_circles(
+            samples, colors = sklearn.datasets.make_circles(
                 n_samples=[num_samples, 0],
                 factor=self.factor, 
                 noise=self.noise, 
@@ -693,76 +707,33 @@ class SklearnDistribution(Distribution):
             )
 
         elif self.name == "s_curve":
-            X, _ = sklearn.datasets.make_s_curve(
+            X, colors = sklearn.datasets.make_s_curve(
                 num_samples, 
                 noise=self.noise, 
                 random_state=seed
             )
-            samples = X[:, [2, 0]]
+            samples = X if self.dim_data == 3 else X[:, [2, 0]]
 
         elif self.name == "swiss":
-            X, _ = sklearn.datasets.make_swiss_roll(
+            X, colors = sklearn.datasets.make_swiss_roll(
                 num_samples, 
                 noise=self.noise, 
                 random_state=seed
             )
-            samples = X[:, [2, 0]] 
+            samples = X if self.dim_data == 3 else X[:, [2, 0]]
         
         samples = self.scale * samples + self.translation
-        samples = jnp.squeeze(
-            jnp.matmul(self.rotation[None, :], samples.T).T
+        if self.rotation is not None:
+            samples = jnp.squeeze(
+                jnp.matmul(self.rotation[None, :], samples.T).T
+            )
+        to_return = (
+            (samples, colors) if return_colors
+            else samples
         )
 
-        return samples
+        return to_return
     
 
 
 
-
-# def create_gaussian_mixture_samplers(
-#     train_batch_size: int = 2048,
-#     valid_batch_size: int = 2048,
-#     rng: Optional[jax.Array] = None,
-# ) -> Tuple[Dataset, Dataset, int]:
-#     """Gaussian samplers for :class:`~ott.solvers.nn.neuraldual.W2NeuralDual`.
-
-#     Args:
-#       name_source: name of the source sampler
-#       name_target: name of the target sampler
-#       train_batch_size: the training batch size
-#       valid_batch_size: the validation batch size
-#       rng: initial PRNG key
-
-#     Returns:
-#       The dataset and dimension of the data.
-#     """
-#     rng = (
-#         random.PRNGKey(0) if rng is None
-#         else rng
-#     )
-#     rng1, rng2, rng3, rng4 = jax.random.split(rng, 4)
-#     train_dataset = Dataset(
-#         source_iter=iter(
-#             GaussianMixture(
-#                 name_source, batch_size=train_batch_size, init_rng=rng1
-#             )
-#         ),
-#         target_iter=iter(
-#             GaussianMixture(
-#                 name_target, batch_size=train_batch_size, init_rng=rng2
-#             )
-#         )
-#     )
-#     valid_dataset = Dataset(
-#         source_iter=iter(
-#             GaussianMixture(
-#                 name_source, batch_size=valid_batch_size, init_rng=rng3
-#             )
-#         ),
-#         target_iter=iter(
-#             GaussianMixture(
-#                 name_target, batch_size=valid_batch_size, init_rng=rng4
-#             )
-#         )
-#     )
-#     return train_dataset, valid_dataset
