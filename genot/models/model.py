@@ -247,6 +247,7 @@ class GENOT:
             problem_type = "linear"
         else:
             problem_type = "fused" if self.fused_penalty > 0 else "quadratic"
+            print("Problem type: ", problem_type)
 
         if self.cost_fn == "graph":
             self.match_fn = self._get_match_fn_graph(
@@ -567,6 +568,7 @@ class GENOT:
             split_dim: int,
             k_neighbors: int,
             k_samples_per_x: int,
+            initializer: Any,
             **kwargs,
         ) -> Tuple[jnp.array, jnp.array, jnp.ndarray, jnp.ndarray]:
             if problem_type == "linear":
