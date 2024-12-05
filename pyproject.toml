@@ -33,7 +33,7 @@ tensorflow-datasets = ">=4.9.0"
 diffrax = ">= 0.4.0"
 wrapt = ">=1.13.23"
 numpyro = ">=0.15.3"
-flax = ">=0.10.0"
+flax = ">=0.8.0"
 torch = ">=2.5.0"
 
 
