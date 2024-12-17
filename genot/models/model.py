@@ -247,7 +247,6 @@ class GENOT:
             problem_type = "linear"
         else:
             problem_type = "fused" if self.fused_penalty > 0 else "quadratic"
-            print("Problem type: ", problem_type)
 
         if self.cost_fn == "graph":
             self.match_fn = self._get_match_fn_graph(
