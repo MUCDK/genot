@@ -567,6 +567,7 @@ class GENOT:
             split_dim: int,
             k_neighbors: int,
             k_samples_per_x: int,
+            initializer: Any,
             **kwargs,
         ) -> Tuple[jnp.array, jnp.array, jnp.ndarray, jnp.ndarray]:
             if problem_type == "linear":
